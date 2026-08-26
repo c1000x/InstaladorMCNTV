@@ -1,7 +1,7 @@
 <#
     ProvisioningTool.ps1
     Interface grafica para provisionamento de maquinas Windows.
-    Nao precisa copiar/colar nada no PowerShell: use o Run.bat para abrir.
+    Pode ser executado localmente ou diretamente do GitHub via: irm <RAW_URL> | iex.
 
     Coluna esquerda: etapas gerais de provisionamento (roda tudo junto em "Executar").
     Coluna direita:  instalar programas individuais (apps.json) ou remover programas
@@ -14,13 +14,48 @@
 #>
 
 # ============================================================
+#  EXECUCAO LOCAL OU VIA "irm ... | iex"
+# ============================================================
+# Quando executado normalmente, $PSCommandPath aponta para este .ps1.
+# Quando executado via "irm URL | iex", nao existe um arquivo associado.
+# Neste caso, salvamos o proprio script em %TEMP% para que:
+#   1) a elevacao para Administrador possa usar -File;
+#   2) o script tenha uma pasta de trabalho para logs/apps.json.
+$scriptPath = $PSCommandPath
+
+if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+    $bootstrapDir = Join-Path $env:TEMP "ProvisioningTool"
+    if (-not (Test-Path $bootstrapDir)) {
+        New-Item -Path $bootstrapDir -ItemType Directory -Force | Out-Null
+    }
+
+    $scriptPath = Join-Path $bootstrapDir "ProvisioningTool.ps1"
+
+    try {
+        $scriptContent = $MyInvocation.MyCommand.Definition
+        if ([string]::IsNullOrWhiteSpace($scriptContent)) {
+            throw "Nao foi possivel obter o conteudo do script recebido pelo iex."
+        }
+
+        [System.IO.File]::WriteAllText(
+            $scriptPath,
+            $scriptContent,
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+    } catch {
+        Write-Host "Erro ao preparar o script para execucao: $($_.Exception.Message)"
+        exit 1
+    }
+}
+
+# ============================================================
 #  AUTO-ELEVACAO (garante execucao como Administrador)
 # ============================================================
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = "powershell.exe"
-    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
     $psi.Verb = "runas"
     try {
         [System.Diagnostics.Process]::Start($psi) | Out-Null
@@ -41,7 +76,7 @@ Add-Type -AssemblyName System.Drawing
 $CustomScriptUrl   = "https://get.activated.win"
 $CustomScriptLabel = "Ativar Windows"
 
-$ScriptDir = Split-Path -Parent $PSCommandPath
+$ScriptDir = Split-Path -Parent $scriptPath
 $LogsDir   = Join-Path $ScriptDir "logs"
 if (-not (Test-Path $LogsDir)) { New-Item -Path $LogsDir -ItemType Directory -Force | Out-Null }
 
