@@ -1,3 +1,9 @@
+# ============================================================
+#  LAYOUT DOS BOTOES
+# ============================================================
+# Os botoes foram alinhados no mesmo eixo vertical (mesmo Y),
+# mantendo as posições horizontais existentes.
+
 <#
     ProvisioningTool.ps1
     Interface grafica para provisionamento de maquinas Windows.
