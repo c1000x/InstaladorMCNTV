@@ -575,16 +575,24 @@ $txtLog.BackColor = [System.Drawing.Color]::White
 $txtLog.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
 $grpStatus.Controls.Add($txtLog)
 
-# ============================================================
-#  VARIAVEIS PARA BACKGROUNDWORKER
-# ============================================================
-$worker = $null
-$logDelegate = $null
+# ---------- BOTAO CANCELAR (DESATIVADO) ----------
+# Como a versão atual é síncrona, o botão Cancelar não é necessário.
+# Mantenho apenas para compatibilidade, mas oculto.
+$btnCancel = New-Object System.Windows.Forms.Button
+$btnCancel.Text = "Cancelar"
+$btnCancel.Location = New-Object System.Drawing.Point(($formWidth - 120), 57)
+$btnCancel.Size = New-Object System.Drawing.Size(80, 22)
+$btnCancel.Font = $FontButton
+$btnCancel.BackColor = $ColorDanger
+$btnCancel.ForeColor = [System.Drawing.Color]::White
+$btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnCancel.Visible = $false
+$btnCancel.Enabled = $false
+$grpStatus.Controls.Add($btnCancel)
 
 # ============================================================
-#  LOGICA DE EXECUCAO COM BACKGROUNDWORKER
+#  FUNCAO DE LOG
 # ============================================================
-
 $AppendLog = {
     param($msg)
     $line = "$msg"
@@ -595,52 +603,9 @@ $AppendLog = {
     [System.Windows.Forms.Application]::DoEvents()
 }
 
-# Função que será executada no BackgroundWorker
-function Start-Provisioning {
-    param($selectedSteps, $dryRun, $logDelegate, $progressDelegate, $reportDelegate)
-
-    $script:Results.Clear()
-    $logDelegate.Invoke("Iniciando provisionamento - Modo: $(if ($dryRun) {'SIMULACAO'} else {'EXECUCAO REAL'})")
-    $logDelegate.Invoke("Log completo salvo em: $LogFilePath")
-    $logDelegate.Invoke("")
-
-    $total = $selectedSteps.Count
-    $current = 0
-    foreach ($key in $selectedSteps) {
-        if ($script:CancelRequested) {
-            $logDelegate.Invoke("Cancelamento solicitado pelo usuario.")
-            break
-        }
-        $current++
-        $progressDelegate.Invoke($current, $total)
-        $lblStatus.Text = "Executando: $key ..."
-        try {
-            & $steps[$key] $logDelegate $dryRun
-            $script:Results[$key] = if ($dryRun) { "SIMULADO" } else { "OK" }
-        } catch {
-            $logDelegate.Invoke("ERRO em '$key': $($_.Exception.Message)")
-            $script:Results[$key] = "FALHA: $($_.Exception.Message)"
-        }
-    }
-
-    $logDelegate.Invoke("")
-    $logDelegate.Invoke("=== Concluido ===")
-
-    # relatorio final
-    $reportLines = @()
-    $reportLines += "Relatorio de Provisionamento - $Timestamp"
-    $reportLines += "Modo: $(if ($dryRun) {'SIMULACAO'} else {'EXECUCAO REAL'})"
-    $reportLines += ""
-    foreach ($k in $script:Results.Keys) {
-        $reportLines += ("{0,-45} {1}" -f $k, $script:Results[$k])
-    }
-    $reportLines | Set-Content -Path $ReportPath -Encoding UTF8
-    $logDelegate.Invoke("Relatorio salvo em: $ReportPath")
-    $reportDelegate.Invoke($ReportPath)
-    $lblStatus.Text = "Provisionamento finalizado."
-}
-
-# ---------- BOTÃO EXECUTAR (UNIFICADO) ----------
+# ============================================================
+#  BOTÃO EXECUTAR (VERSÃO SINCRONA - FUNCIONAL)
+# ============================================================
 $btnRun.Add_Click({
     $btnRun.Enabled = $false
     $btnSelAll.Enabled = $false
@@ -652,116 +617,54 @@ $btnRun.Add_Click({
     $selectedSteps = $steps.Keys | Where-Object { $checkboxes[$_].Checked }
 
     if ($selectedSteps.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show("Nenhuma etapa selecionada.", "Aviso") | Out-Null
+        [System.Windows.Forms.MessageBox]::Show("Nenhuma etapa selecionada.", "Aviso")
         $btnRun.Enabled = $true
         $btnSelAll.Enabled = $true
         $btnSelNone.Enabled = $true
         return
     }
 
+    $AppendLog.Invoke("=== INICIANDO PROVISIONAMENTO (síncrono) ===")
+    $AppendLog.Invoke("Modo: $(if ($DryRun) {'SIMULAÇÃO'} else {'EXECUÇÃO REAL'})")
+    $AppendLog.Invoke("")
+
     $progressBar.Maximum = $selectedSteps.Count
     $progressBar.Value = 0
 
-    # Exibe o botão Cancelar
-    $btnCancel.Visible = $true
-    $btnCancel.Enabled = $true
-
-    # Cria o worker
-    $worker = New-Object System.ComponentModel.BackgroundWorker
-    $worker.WorkerReportsProgress = $true
-    $worker.WorkerSupportsCancellation = $true
-
-    $worker.Add_DoWork({
-        param($sender, $e)
-        $logDel = $AppendLog
-        $progressDel = {
-            param($current, $total)
-            $progressBar.Value = $current
-            $sender.ReportProgress(($current / $total * 100))
+    foreach ($key in $selectedSteps) {
+        $lblStatus.Text = "Executando: $key ..."
+        $AppendLog.Invoke("")
+        $AppendLog.Invoke(">>> $key")
+        try {
+            & $steps[$key] $AppendLog $DryRun
+            $script:Results[$key] = if ($DryRun) { "SIMULADO" } else { "OK" }
+        } catch {
+            $AppendLog.Invoke("ERRO em '$key': $($_.Exception.Message)")
+            $script:Results[$key] = "FALHA: $($_.Exception.Message)"
         }
-        $reportDel = {
-            param($path)
-            [System.Windows.Forms.MessageBox]::Show("Provisionamento concluido. Relatorio em:`n$path", "Finalizado") | Out-Null
-        }
-        Start-Provisioning -selectedSteps $selectedSteps -dryRun $DryRun -logDelegate $logDel -progressDelegate $progressDel -reportDelegate $reportDel
-    })
-
-    $worker.Add_ProgressChanged({
-        # (opcional) pode atualizar o lblStatus aqui se desejar
-    })
-
-    $worker.Add_RunWorkerCompleted({
-        # Restaura a interface
-        $btnRun.Enabled = $true
-        $btnSelAll.Enabled = $true
-        $btnSelNone.Enabled = $true
-        $btnCancel.Visible = $false
-        $btnCancel.Enabled = $false
-
-        if ($script:CancelRequested) {
-            $lblStatus.Text = "Cancelado pelo usuario."
-        } else {
-            $lblStatus.Text = "Pronto."
-        }
-    })
-
-    $worker.RunWorkerAsync()
-})
-
-# ---------- BOTÃO CANCELAR ----------
-$btnCancel.Add_Click({
-    if ($worker -and $worker.IsBusy) {
-        $script:CancelRequested = $true
-        $worker.CancelAsync()
-        $btnCancel.Enabled = $false
-        $lblStatus.Text = "Cancelando..."
+        $progressBar.Value += 1
+        [System.Windows.Forms.Application]::DoEvents()
     }
-})
 
-# Botão para cancelar (opcional) - adicionar um botão de cancelar no status
-$btnCancel = New-Object System.Windows.Forms.Button
-$btnCancel.Text = "Cancelar"
-$btnCancel.Location = New-Object System.Drawing.Point(($formWidth - 120), 57)
-$btnCancel.Size = New-Object System.Drawing.Size(80, 22)
-$btnCancel.Font = $FontButton
-$btnCancel.BackColor = $ColorDanger
-$btnCancel.ForeColor = [System.Drawing.Color]::White
-$btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$btnCancel.Visible = $false
-$grpStatus.Controls.Add($btnCancel)
+    $AppendLog.Invoke("")
+    $AppendLog.Invoke("=== PROVISIONAMENTO CONCLUÍDO ===")
 
-# Modificar o worker para mostrar o botão cancelar
-$btnRun.Add_Click({
-    # === DIAGNÓSTICO ===
-    [System.Windows.Forms.MessageBox]::Show("Botão Executar foi clicado!", "Debug")
-    Write-Host "Botão Executar clicado!" -ForegroundColor Green
-    # === FIM DIAGNÓSTICO ===
-
-    $btnRun.Enabled = $false
-    # ... resto do código
-})
-
-$btnRun.Add_Click({
-    # ... (código existente)
-    $btnCancel.Visible = $true
-    $btnCancel.Enabled = $true
-    $worker.RunWorkerAsync()
-})
-
-$btnCancel.Add_Click({
-    if ($worker -and $worker.IsBusy) {
-        $script:CancelRequested = $true
-        $worker.CancelAsync()
-        $btnCancel.Enabled = $false
-        $lblStatus.Text = "Cancelando..."
+    # Gera relatório
+    $reportLines = @()
+    $reportLines += "Relatorio de Provisionamento - $Timestamp"
+    $reportLines += "Modo: $(if ($DryRun) {'SIMULACAO'} else {'EXECUCAO REAL'})"
+    $reportLines += ""
+    foreach ($k in $script:Results.Keys) {
+        $reportLines += ("{0,-45} {1}" -f $k, $script:Results[$k])
     }
-})
+    $reportLines | Set-Content -Path $ReportPath -Encoding UTF8
+    $AppendLog.Invoke("Relatorio salvo em: $ReportPath")
 
-# Ajustar o evento RunWorkerCompleted para esconder o botão cancelar
-$worker.Add_RunWorkerCompleted({
-    $btnCancel.Visible = $false
-    $btnCancel.Enabled = $false
-    # ... resto do código
+    $btnRun.Enabled = $true
+    $btnSelAll.Enabled = $true
+    $btnSelNone.Enabled = $true
+    $lblStatus.Text = "Pronto."
+    [System.Windows.Forms.MessageBox]::Show("Provisionamento concluido. Relatorio em:`n$ReportPath", "Finalizado")
 })
 
 # ============================================================
