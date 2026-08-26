@@ -2,7 +2,7 @@
     ProvisioningTool.ps1
     Interface grafica para provisionamento de maquinas Windows.
     Layout adaptativo – ajusta-se automaticamente ao tamanho da tela.
-    Todos os eventos funcionando, incluindo a aba SITEF.
+    Todas as funções e eventos incluídos.
 #>
 
 # ============================================================
@@ -96,26 +96,207 @@ $col3X = $col2X + $colWidth + $gap
 # ============================================================
 #  FUNCOES DE CADA ETAPA (Provisionamento)
 # ============================================================
-function Step-RestorePoint { param($Log, [bool]$DryRun) ... } # (coloque as funções completas aqui)
-function Step-VersoesAnteriores { param($Log, [bool]$DryRun) ... }
-function Step-IconesAreaTrabalho { param($Log, [bool]$DryRun) ... }
-function Step-Telemetria { param($Log, [bool]$DryRun) ... }
-function Step-Energia { param($Log, [bool]$DryRun) ... }
-function Step-RegiaoIdioma { param($Log, [bool]$DryRun) ... }
-function Step-Debloat { param($Log, [bool]$DryRun) ... }
-function Ensure-ChocoAvailable { param($Log) ... }
-function Step-Chocolatey { param($Log, [bool]$DryRun) ... }
-function Step-WingetUpgradeAll { param($Log, [bool]$DryRun) ... }
-function Step-TarefaLimpeza { param($Log, [bool]$DryRun) ... }
+function Step-RestorePoint {
+    param($Log, [bool]$DryRun)
+    $Log.Invoke("== Ponto de restauracao ==")
+    if ($DryRun) { $Log.Invoke("[SIMULACAO] Criaria um ponto de restauracao antes das alteracoes."); return }
+    try {
+        Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
+        Checkpoint-Computer -Description "Antes do provisionamento" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
+        $Log.Invoke("Ponto de restauracao criado.")
+    } catch {
+        $Log.Invoke("Aviso: nao foi possivel criar ponto de restauracao (pode ja existir um nas ultimas 24h, ou System Restore estar desativado). $($_.Exception.Message)")
+    }
+}
+
+function Step-VersoesAnteriores {
+    param($Log, [bool]$DryRun)
+    $drive = $env:SystemDrive
+    $Log.Invoke("== Habilitar Versoes Anteriores (Shadow Copies) em $drive ==")
+    if ($DryRun) {
+        $Log.Invoke("[SIMULACAO] Ativaria System Restore em $drive, reservaria 10% do volume para copias de sombra e agendaria snapshots a cada 4h.")
+        return
+    }
+    try {
+        Enable-ComputerRestore -Drive "$drive\" -ErrorAction Stop
+        $Log.Invoke("System Restore ativado em $drive")
+    } catch {
+        $Log.Invoke("Aviso ao ativar System Restore: $($_.Exception.Message)")
+    }
+
+    $Log.Invoke("Reservando espaco para copias de sombra (10% do volume)...")
+    vssadmin resize shadowstorage /for="$drive" /on="$drive" /maxsize=10% 2>&1 | ForEach-Object { $Log.Invoke($_) }
+
+    $Log.Invoke("Criando snapshot inicial...")
+    vssadmin create shadow /for="$drive" 2>&1 | ForEach-Object { $Log.Invoke($_) }
+
+    schtasks /create /tn "VersoesAnteriores_ShadowCopy" /tr "vssadmin create shadow /for=$drive" /sc hourly /mo 4 /ru "SYSTEM" /rl highest /f | Out-Null
+    $Log.Invoke("Tarefa agendada 'VersoesAnteriores_ShadowCopy' criada (snapshot a cada 4h).")
+    $Log.Invoke("A partir do proximo snapshot, a aba 'Versoes Anteriores' nas propriedades de pastas em $drive vai mostrar as copias.")
+}
+
+function Step-IconesAreaTrabalho {
+    param($Log, [bool]$DryRun)
+    $Log.Invoke("== Icones Este Computador / Pasta do Usuario ==")
+    if ($DryRun) { $Log.Invoke("[SIMULACAO] Ativaria os icones e reiniciaria o Explorer."); return }
+    $path = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
+    New-Item -Path $path -Force | Out-Null
+    New-ItemProperty -Path $path -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -PropertyType DWord -Value 0 -Force | Out-Null
+    New-ItemProperty -Path $path -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -PropertyType DWord -Value 0 -Force | Out-Null
+    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+    Start-Process explorer
+    $Log.Invoke("Icones configurados e Explorer reiniciado.")
+}
+
+function Step-Telemetria {
+    param($Log, [bool]$DryRun)
+    $Log.Invoke("== Telemetria ==")
+    if ($DryRun) { $Log.Invoke("[SIMULACAO] Desativaria a telemetria via GPO local."); return }
+    $path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
+    New-Item -Path $path -Force | Out-Null
+    Set-ItemProperty -Path $path -Name "AllowTelemetry" -Value 0 -Force
+    $Log.Invoke("Telemetria desativada.")
+}
+
+function Step-Energia {
+    param($Log, [bool]$DryRun)
+    $Log.Invoke("== Plano de energia ==")
+    if ($DryRun) { $Log.Invoke("[SIMULACAO] Ajustaria monitor/disco/suspensao/hibernacao para nunca desligar."); return }
+    powercfg /change monitor-timeout-ac 0
+    powercfg /change monitor-timeout-dc 0
+    powercfg /change standby-timeout-ac 0
+    powercfg /change standby-timeout-dc 0
+    powercfg /change hibernate-timeout-ac 0
+    powercfg /change hibernate-timeout-dc 0
+    powercfg /change disk-timeout-ac 0
+    powercfg /change disk-timeout-dc 0
+    $Log.Invoke("Plano de energia ajustado.")
+}
+
+function Step-RegiaoIdioma {
+    param($Log, [bool]$DryRun)
+    $Log.Invoke("== Fuso horario e localizacao (Brasil) ==")
+    if ($DryRun) { $Log.Invoke("[SIMULACAO] Definiria fuso horario de Brasilia e localizacao Brasil."); return }
+    try {
+        Set-TimeZone -Id "E. South America Standard Time" -ErrorAction Stop
+        Set-WinHomeLocation -GeoId 76
+        $Log.Invoke("Fuso horario (Brasilia) e localizacao (Brasil) definidos. Layout de teclado/idioma completo pode exigir reinicio.")
+    } catch {
+        $Log.Invoke("Aviso ao ajustar regiao/idioma: $($_.Exception.Message)")
+    }
+}
+
+function Step-Debloat {
+    param($Log, [bool]$DryRun)
+    $Log.Invoke("== Remover apps padrao (usuario atual + provisionamento) ==")
+    $apps = @("3dbuilder","bingweather","xboxapp","zunemusic","officehub","skypeapp")
+    if ($DryRun) { $Log.Invoke("[SIMULACAO] Removeria: $($apps -join ', ')"); return }
+    foreach ($a in $apps) {
+        Get-AppxPackage "*$a*" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue
+        Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like "*$a*" } |
+            Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
+        $Log.Invoke("Removido (se existia): $a")
+    }
+}
+
+function Ensure-ChocoAvailable {
+    param($Log)
+    if (Get-Command choco -ErrorAction SilentlyContinue) { return $true }
+    $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath    = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machinePath;$userPath"
+    if (Get-Command choco -ErrorAction SilentlyContinue) { return $true }
+    $chocoBin = Join-Path $env:ProgramData "chocolatey\bin"
+    if (Test-Path (Join-Path $chocoBin "choco.exe")) {
+        $env:Path += ";$chocoBin"
+        return $true
+    }
+    if ($Log) { $Log.Invoke("Chocolatey nao encontrado. Marque e execute a etapa 'Instalar/Atualizar Chocolatey' primeiro.") }
+    return $false
+}
+
+function Step-Chocolatey {
+    param($Log, [bool]$DryRun)
+    $Log.Invoke("== Chocolatey ==")
+    if (Get-Command choco -ErrorAction SilentlyContinue) {
+        $Log.Invoke("Chocolatey ja instalado, pulando.")
+        return
+    }
+    if ($DryRun) { $Log.Invoke("[SIMULACAO] Instalaria o Chocolatey."); return }
+    Set-ExecutionPolicy Bypass -Scope Process -Force
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+    $env:Path += ";$env:ProgramData\chocolatey\bin"
+    $Log.Invoke("Chocolatey instalado.")
+}
+
+function Step-WingetUpgradeAll {
+    param($Log, [bool]$DryRun)
+    $Log.Invoke("== Preparando winget e atualizando todos os apps instalados ==")
+    if (-not $DryRun) {
+        try {
+            Install-PackageProvider -Name NuGet -Force -ErrorAction Stop | Out-Null
+            if (-not (Get-Module -ListAvailable -Name Microsoft.WinGet.Client)) {
+                Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery -Confirm:$false -ErrorAction Stop
+            }
+            Repair-WinGetPackageManager -ErrorAction SilentlyContinue
+            winget source update | Out-Null
+        } catch {
+            $Log.Invoke("Aviso ao preparar winget: $($_.Exception.Message)")
+        }
+    }
+    if ($DryRun) { $Log.Invoke("[SIMULACAO] winget upgrade --all"); return }
+    $Log.Invoke("Atualizando todos os pacotes via winget")
+    winget upgrade --all --accept-source-agreements --accept-package-agreements --silent 2>&1 | ForEach-Object { $Log.Invoke($_) }
+}
+
+function Step-TarefaLimpeza {
+    param($Log, [bool]$DryRun)
+    $Log.Invoke("== Tarefa agendada de limpeza de disco ==")
+    if ($DryRun) { $Log.Invoke("[SIMULACAO] Criaria tarefa 'LimpezaDisco' (domingos 03:00, como SYSTEM)."); return }
+    schtasks /create /tn "LimpezaDisco" /tr "cleanmgr /sagerun:1" /sc weekly /d SUN /st 03:00 /ru "SYSTEM" /rl highest /f | Out-Null
+    $Log.Invoke("Tarefa 'LimpezaDisco' criada/atualizada.")
+}
 
 # ============================================================
 #  CATALOGO DE PROGRAMAS E LISTA DE INSTALADOS
 # ============================================================
-function Build-AppCatalogLabels { ... }
-function Get-InstalledProgramsList { ... }
+function Build-AppCatalogLabels {
+    $script:AppCatalogMap = @{}
+    $labels = New-Object System.Collections.ArrayList
+    foreach ($id in $ChocoApps) {
+        $label = "[Choco] $id"
+        $script:AppCatalogMap[$label] = @{ Manager = "choco"; Id = $id }
+        [void]$labels.Add($label)
+    }
+    foreach ($id in $WingetApps) {
+        $label = "[Winget] $id"
+        $script:AppCatalogMap[$label] = @{ Manager = "winget"; Id = $id }
+        [void]$labels.Add($label)
+    }
+    foreach ($id in $WingetStoreApps) {
+        $label = "[Store] $id"
+        $script:AppCatalogMap[$label] = @{ Manager = "wingetStore"; Id = $id }
+        [void]$labels.Add($label)
+    }
+    return $labels
+}
+
+function Get-InstalledProgramsList {
+    $paths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -and (-not $_.SystemComponent) -and $_.UninstallString } |
+        Select-Object DisplayName, UninstallString, QuietUninstallString |
+        Sort-Object DisplayName
+}
 
 # ============================================================
-#  FUNÇÃO DE INSTALAÇÃO SITEF (COMPLETA)
+#  FUNÇÃO DE INSTALAÇÃO SITEF
 # ============================================================
 function Install-Sitef {
     $log = $script:SitefLogDelegate
@@ -331,14 +512,14 @@ $tabControl.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windo
 $contentPanel.Controls.Add($tabControl)
 
 # ============================================================
-#  ABA PROVISIONAMENTO (resumida para não alongar)
+#  ABA PROVISIONAMENTO
 # ============================================================
 $tabProvisioning = New-Object System.Windows.Forms.TabPage
 $tabProvisioning.Text = "Provisionamento"
 $tabProvisioning.BackColor = $ColorBackground
 $tabControl.Controls.Add($tabProvisioning)
 
-# GRUPO 1 (Configuração)
+# GRUPO 1: Configuração do sistema
 $grpSystem = New-Object System.Windows.Forms.GroupBox
 $grpSystem.Text = "1. Configuracao do sistema"
 $grpSystem.Font = $FontHeader
@@ -348,9 +529,76 @@ $grpSystem.Size = New-Object System.Drawing.Size($colWidth, $groupH)
 $grpSystem.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
 $tabProvisioning.Controls.Add($grpSystem)
 
-# (Aqui você coloca os checkboxes e botões da primeira coluna, igual ao que já tem)
+$steps = [ordered]@{
+    "Ponto de Restauracao"                  = { param($l,$d) Step-RestorePoint -Log $l -DryRun $d }
+    "Versoes Anteriores (Shadow Copy)"      = { param($l,$d) Step-VersoesAnteriores -Log $l -DryRun $d }
+    "Icones da Area de Trabalho"            = { param($l,$d) Step-IconesAreaTrabalho -Log $l -DryRun $d }
+    "Desativar Telemetria"                  = { param($l,$d) Step-Telemetria -Log $l -DryRun $d }
+    "Ajustar Plano de Energia"              = { param($l,$d) Step-Energia -Log $l -DryRun $d }
+    "Fuso Horario / Localizacao (BR)"       = { param($l,$d) Step-RegiaoIdioma -Log $l -DryRun $d }
+    "Remover Apps Padrao (Debloat)"         = { param($l,$d) Step-Debloat -Log $l -DryRun $d }
+    "Instalar/Atualizar Chocolatey"         = { param($l,$d) Step-Chocolatey -Log $l -DryRun $d }
+    "Atualizar Apps (winget upgrade)"       = { param($l,$d) Step-WingetUpgradeAll -Log $l -DryRun $d }
+    "Criar Tarefa de Limpeza Semanal"       = { param($l,$d) Step-TarefaLimpeza -Log $l -DryRun $d }
+}
 
-# GRUPO 2 (Instalar)
+$UncheckedByDefault = @("Versoes Anteriores (Shadow Copy)")
+$checkboxes = @{}
+$y = 35
+foreach ($key in $steps.Keys) {
+    $cb = New-Object System.Windows.Forms.CheckBox
+    $cb.Text = $key
+    $cb.Checked = -not ($UncheckedByDefault -contains $key)
+    $cb.Location = New-Object System.Drawing.Point(15, $y)
+    $cb.Size = New-Object System.Drawing.Size(($colWidth - 40), 22)
+    $cb.Font = $FontNormal
+    $cb.ForeColor = $ColorText
+    $grpSystem.Controls.Add($cb)
+    $checkboxes[$key] = $cb
+    $y += 24
+}
+
+$chkDryRun = New-Object System.Windows.Forms.CheckBox
+$chkDryRun.Text = "Modo Simulacao (dry-run)"
+$chkDryRun.Location = New-Object System.Drawing.Point(15, ($y + 3))
+$chkDryRun.Size = New-Object System.Drawing.Size(($colWidth - 40), 22)
+$chkDryRun.ForeColor = [System.Drawing.Color]::DarkBlue
+$grpSystem.Controls.Add($chkDryRun)
+
+$btnSelAll = New-Object System.Windows.Forms.Button
+$btnSelAll.Text = "Marcar todos"
+$btnSelAll.Location = New-Object System.Drawing.Point(15, 305)
+$btnSelAll.Size = New-Object System.Drawing.Size(160, 30)
+$btnSelAll.Font = $FontButton
+$btnSelAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnSelAll.FlatAppearance.BorderColor = $ColorBorder
+$btnSelAll.BackColor = $ColorSurface
+$btnSelAll.Add_Click({ $checkboxes.Values | ForEach-Object { $_.Checked = $true } })
+$grpSystem.Controls.Add($btnSelAll)
+
+$btnSelNone = New-Object System.Windows.Forms.Button
+$btnSelNone.Text = "Desmarcar todos"
+$btnSelNone.Location = New-Object System.Drawing.Point(190, 305)
+$btnSelNone.Size = New-Object System.Drawing.Size(($colWidth - 210), 30)
+$btnSelNone.Font = $FontButton
+$btnSelNone.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnSelNone.FlatAppearance.BorderColor = $ColorBorder
+$btnSelNone.BackColor = $ColorSurface
+$btnSelNone.Add_Click({ $checkboxes.Values | ForEach-Object { $_.Checked = $false } })
+$grpSystem.Controls.Add($btnSelNone)
+
+$btnRun = New-Object System.Windows.Forms.Button
+$btnRun.Text = "Executar configuracao"
+$btnRun.Location = New-Object System.Drawing.Point(15, 350)
+$btnRun.Size = New-Object System.Drawing.Size(($colWidth - 30), 30)
+$btnRun.Font = $FontButton
+$btnRun.BackColor = $ColorPrimary
+$btnRun.ForeColor = [System.Drawing.Color]::White
+$btnRun.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnRun.FlatAppearance.BorderSize = 0
+$grpSystem.Controls.Add($btnRun)
+
+# GRUPO 2: Instalar aplicativos
 $grpInstall = New-Object System.Windows.Forms.GroupBox
 $grpInstall.Text = "2. Instalar aplicativos"
 $grpInstall.Font = $FontHeader
@@ -360,9 +608,59 @@ $grpInstall.Size = New-Object System.Drawing.Size($colWidth, $groupH)
 $grpInstall.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
 $tabProvisioning.Controls.Add($grpInstall)
 
-# (Aqui você coloca o filtro e a lista de apps)
+$lblInstallInfo = New-Object System.Windows.Forms.Label
+$lblInstallInfo.Text = "Buscar:"
+$lblInstallInfo.Font = $FontNormal
+$lblInstallInfo.ForeColor = $ColorMuted
+$lblInstallInfo.Location = New-Object System.Drawing.Point(15, 32)
+$lblInstallInfo.Size = New-Object System.Drawing.Size(50, 22)
+$grpInstall.Controls.Add($lblInstallInfo)
 
-# GRUPO 3 (Remover)
+$txtSearchInstall = New-Object System.Windows.Forms.TextBox
+$txtSearchInstall.Location = New-Object System.Drawing.Point(65, 32)
+$txtSearchInstall.Size = New-Object System.Drawing.Size(($colWidth - 80), 22)
+$txtSearchInstall.Font = $FontNormal
+$grpInstall.Controls.Add($txtSearchInstall)
+
+$clbInstall = New-Object System.Windows.Forms.CheckedListBox
+$clbInstall.Location = New-Object System.Drawing.Point(15, 58)
+$clbInstall.Size = New-Object System.Drawing.Size(($colWidth - 30), 265)
+$clbInstall.CheckOnClick = $true
+$clbInstall.Font = $FontNormal
+$allLabels = Build-AppCatalogLabels
+$clbInstall.Tag = $allLabels
+foreach ($label in $allLabels) { [void]$clbInstall.Items.Add($label, $true) }
+$grpInstall.Controls.Add($clbInstall)
+
+$txtSearchInstall.Add_TextChanged({
+    $search = $txtSearchInstall.Text.Trim().ToLower()
+    $clbInstall.BeginUpdate()
+    $clbInstall.Items.Clear()
+    $all = $clbInstall.Tag
+    if ([string]::IsNullOrEmpty($search)) {
+        foreach ($item in $all) { [void]$clbInstall.Items.Add($item, $true) }
+    } else {
+        foreach ($item in $all) {
+            if ($item.ToLower().Contains($search)) {
+                [void]$clbInstall.Items.Add($item, $true)
+            }
+        }
+    }
+    $clbInstall.EndUpdate()
+})
+
+$btnInstallSelected = New-Object System.Windows.Forms.Button
+$btnInstallSelected.Text = "INSTALAR SELECIONADOS (Paralelo)"
+$btnInstallSelected.Location = New-Object System.Drawing.Point(15, 335)
+$btnInstallSelected.Size = New-Object System.Drawing.Size(($colWidth - 30), 40)
+$btnInstallSelected.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+$btnInstallSelected.BackColor = $ColorSuccess
+$btnInstallSelected.ForeColor = [System.Drawing.Color]::White
+$btnInstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnInstallSelected.FlatAppearance.BorderSize = 0
+$grpInstall.Controls.Add($btnInstallSelected)
+
+# GRUPO 3: Gerenciar aplicativos instalados
 $grpUninstall = New-Object System.Windows.Forms.GroupBox
 $grpUninstall.Text = "3. Gerenciar aplicativos instalados"
 $grpUninstall.Font = $FontHeader
@@ -372,10 +670,54 @@ $grpUninstall.Size = New-Object System.Drawing.Size($colWidth, $groupH)
 $grpUninstall.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
 $tabProvisioning.Controls.Add($grpUninstall)
 
-# (Aqui você coloca a lista de instalados e botões)
+$lblUninstallInfo = New-Object System.Windows.Forms.Label
+$lblUninstallInfo.Text = "Atualize a lista e selecione o que deseja remover:"
+$lblUninstallInfo.Font = $FontNormal
+$lblUninstallInfo.ForeColor = $ColorMuted
+$lblUninstallInfo.Location = New-Object System.Drawing.Point(15, 32)
+$lblUninstallInfo.Size = New-Object System.Drawing.Size(($colWidth - 30), 22)
+$grpUninstall.Controls.Add($lblUninstallInfo)
+
+$clbUninstall = New-Object System.Windows.Forms.CheckedListBox
+$clbUninstall.Location = New-Object System.Drawing.Point(15, 58)
+$clbUninstall.Size = New-Object System.Drawing.Size(($colWidth - 30), 245)
+$clbUninstall.CheckOnClick = $true
+$clbUninstall.Font = $FontNormal
+$grpUninstall.Controls.Add($clbUninstall)
+
+$btnRefreshInstalled = New-Object System.Windows.Forms.Button
+$btnRefreshInstalled.Text = "Atualizar lista"
+$btnRefreshInstalled.Location = New-Object System.Drawing.Point(15, 315)
+$btnRefreshInstalled.Size = New-Object System.Drawing.Size(($colWidth - 180), 30)
+$btnRefreshInstalled.Font = $FontButton
+$btnRefreshInstalled.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnRefreshInstalled.FlatAppearance.BorderColor = $ColorBorder
+$btnRefreshInstalled.BackColor = $ColorSurface
+$grpUninstall.Controls.Add($btnRefreshInstalled)
+
+$btnUninstallSelected = New-Object System.Windows.Forms.Button
+$btnUninstallSelected.Text = "Desinstalar"
+$btnUninstallSelected.Location = New-Object System.Drawing.Point(($colWidth - 150), 315)
+$btnUninstallSelected.Size = New-Object System.Drawing.Size(135, 30)
+$btnUninstallSelected.Font = $FontButton
+$btnUninstallSelected.BackColor = $ColorDanger
+$btnUninstallSelected.ForeColor = [System.Drawing.Color]::White
+$btnUninstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnUninstallSelected.FlatAppearance.BorderSize = 0
+$grpUninstall.Controls.Add($btnUninstallSelected)
+
+$btnCustom = New-Object System.Windows.Forms.Button
+$btnCustom.Text = $CustomScriptLabel
+$btnCustom.Location = New-Object System.Drawing.Point(15, 355)
+$btnCustom.Size = New-Object System.Drawing.Size(($colWidth - 30), 30)
+$btnCustom.Font = $FontButton
+$btnCustom.BackColor = $ColorSurface
+$btnCustom.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnCustom.FlatAppearance.BorderColor = $ColorBorder
+$grpUninstall.Controls.Add($btnCustom)
 
 # ============================================================
-#  ABA SITEF (com eventos)
+#  ABA SITEF
 # ============================================================
 $tabSitef = New-Object System.Windows.Forms.TabPage
 $tabSitef.Text = "SITEF"
@@ -446,10 +788,250 @@ $txtSitefLog.BackColor = [System.Drawing.Color]::White
 $tabSitef.Controls.Add($txtSitefLog)
 
 # ============================================================
-#  EVENTOS DOS BOTÕES SITEF (AQUI ESTÁ A CORREÇÃO)
+#  EVENTOS DOS BOTÕES
 # ============================================================
+
+# Evento do botão Executar configuração
+$btnRun.Add_Click({
+    [System.Windows.Forms.MessageBox]::Show("Botão Executar clicado!", "Diagnóstico")
+    $btnRun.Enabled = $false
+    $btnSelAll.Enabled = $false
+    $btnSelNone.Enabled = $false
+    $txtLog.Clear()
+    $script:CancelRequested = $false
+
+    $DryRun = $chkDryRun.Checked
+    $selectedSteps = $steps.Keys | Where-Object { $checkboxes[$_].Checked }
+
+    if ($selectedSteps.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("Nenhuma etapa selecionada.", "Aviso")
+        $btnRun.Enabled = $true
+        $btnSelAll.Enabled = $true
+        $btnSelNone.Enabled = $true
+        return
+    }
+
+    $AppendLog.Invoke("=== INICIANDO PROVISIONAMENTO ===")
+    $AppendLog.Invoke("Modo: $(if ($DryRun) {'SIMULAÇÃO'} else {'EXECUÇÃO REAL'})")
+    $AppendLog.Invoke("")
+
+    $progressBar.Maximum = $selectedSteps.Count
+    $progressBar.Value = 0
+
+    foreach ($key in $selectedSteps) {
+        $lblStatus.Text = "Executando: $key ..."
+        $AppendLog.Invoke("")
+        $AppendLog.Invoke(">>> $key")
+        try {
+            & $steps[$key] $AppendLog $DryRun
+            $script:Results[$key] = if ($DryRun) { "SIMULADO" } else { "OK" }
+        } catch {
+            $AppendLog.Invoke("ERRO em '$key': $($_.Exception.Message)")
+            $script:Results[$key] = "FALHA: $($_.Exception.Message)"
+        }
+        $progressBar.Value += 1
+        [System.Windows.Forms.Application]::DoEvents()
+    }
+
+    $AppendLog.Invoke("")
+    $AppendLog.Invoke("=== PROVISIONAMENTO CONCLUÍDO ===")
+
+    $reportLines = @()
+    $reportLines += "Relatorio de Provisionamento - $Timestamp"
+    $reportLines += "Modo: $(if ($DryRun) {'SIMULACAO'} else {'EXECUCAO REAL'})"
+    $reportLines += ""
+    foreach ($k in $script:Results.Keys) {
+        $reportLines += ("{0,-45} {1}" -f $k, $script:Results[$k])
+    }
+    $reportLines | Set-Content -Path $ReportPath -Encoding UTF8
+    $AppendLog.Invoke("Relatorio salvo em: $ReportPath")
+
+    $btnRun.Enabled = $true
+    $btnSelAll.Enabled = $true
+    $btnSelNone.Enabled = $true
+    $lblStatus.Text = "Pronto."
+    [System.Windows.Forms.MessageBox]::Show("Provisionamento concluido. Relatorio em:`n$ReportPath", "Finalizado")
+})
+
+# Evento do botão Instalar selecionados (paralelo)
+$btnInstallSelected.Add_Click({
+    [System.Windows.Forms.MessageBox]::Show("Botão Instalar selecionados clicado!", "Diagnóstico")
+    $selectedLabels = @($clbInstall.CheckedItems)
+    if ($selectedLabels.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("Selecione ao menos um programa na lista.", "Aviso")
+        return
+    }
+
+    $btnInstallSelected.Enabled = $false
+    $AppendLog.Invoke("== Instalando programas selecionados (em paralelo) ==")
+    $AppendLog.Invoke("Total: $($selectedLabels.Count) aplicativos")
+
+    $precisaChoco = $selectedLabels | Where-Object { $script:AppCatalogMap[$_].Manager -eq "choco" }
+    $chocoOk = if ($precisaChoco) { Ensure-ChocoAvailable -Log $AppendLog } else { $true }
+
+    if ($precisaChoco -and -not $chocoOk) {
+        $AppendLog.Invoke("Chocolatey nao disponivel. Instale-o primeiro.")
+        $btnInstallSelected.Enabled = $true
+        return
+    }
+
+    $jobs = @()
+    $totalJobs = $selectedLabels.Count
+    $completed = 0
+
+    foreach ($label in $selectedLabels) {
+        $info = $script:AppCatalogMap[$label]
+        if (-not $info) { continue }
+
+        $jobScript = {
+            param($manager, $id, $logDelegate)
+            try {
+                $output = @()
+                switch ($manager) {
+                    "choco" {
+                        $output += "Instalando (choco): $id"
+                        $result = choco install $id -y --force --ignore-checksums 2>&1
+                        $output += $result
+                    }
+                    "winget" {
+                        $output += "Instalando (winget): $id"
+                        $result = winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent 2>&1
+                        $output += $result
+                    }
+                    "wingetStore" {
+                        $output += "Instalando (msstore): $id"
+                        $result = winget install --id $id --source msstore --accept-source-agreements --accept-package-agreements --silent 2>&1
+                        $output += $result
+                    }
+                }
+                return $output
+            } catch {
+                return "ERRO ao instalar $id : $($_.Exception.Message)"
+            }
+        }
+
+        $job = Start-Job -ScriptBlock $jobScript -ArgumentList $info.Manager, $info.Id, $AppendLog
+        $jobs += $job
+    }
+
+    while ($jobs | Where-Object { $_.State -eq 'Running' }) {
+        Start-Sleep -Milliseconds 500
+        $running = ($jobs | Where-Object { $_.State -eq 'Running' }).Count
+        $completed = $totalJobs - $running
+        $lblStatus.Text = "Instalando... $completed de $totalJobs concluidos"
+        $progressBar.Value = [int](($completed / $totalJobs) * 100)
+        [System.Windows.Forms.Application]::DoEvents()
+    }
+
+    foreach ($job in $jobs) {
+        $output = Receive-Job -Job $job -ErrorAction SilentlyContinue
+        if ($output) {
+            foreach ($line in $output) { $AppendLog.Invoke($line) }
+        }
+        Remove-Job -Job $job -Force
+    }
+
+    $AppendLog.Invoke("Instalacao paralela concluida.")
+    $lblStatus.Text = "Instalacao concluida."
+    $progressBar.Value = 0
+    $btnInstallSelected.Enabled = $true
+})
+
+# Evento do botão Ativar Windows (personalizado)
+$btnCustom.Add_Click({
+    [System.Windows.Forms.MessageBox]::Show("Botão Ativar Windows clicado!", "Diagnóstico")
+    if ([string]::IsNullOrWhiteSpace($CustomScriptUrl) -or $CustomScriptUrl -like "*usuario/repositorio*") {
+        [System.Windows.Forms.MessageBox]::Show("Edite as variaveis `$CustomScriptUrl e `$CustomScriptLabel no topo do ProvisioningTool.ps1 antes de usar este botao.", "Configure o link")
+        return
+    }
+
+    $confirm = [System.Windows.Forms.MessageBox]::Show(
+        "Isso vai baixar e executar o script em:`n$CustomScriptUrl`n`nTem certeza que confia nesta fonte?",
+        "Confirmar execucao de script remoto",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Warning
+    )
+    if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+    $btnCustom.Enabled = $false
+    $AppendLog.Invoke("== Executando script externo: $CustomScriptLabel ==")
+    $AppendLog.Invoke("URL: $CustomScriptUrl")
+
+    try {
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        $tempScript = Join-Path $env:TEMP "MCNTV_custom_$(Get-Random).ps1"
+        (New-Object System.Net.WebClient).DownloadFile($CustomScriptUrl, $tempScript)
+
+        $AppendLog.Invoke("Script baixado para $tempScript")
+        & $tempScript 2>&1 | ForEach-Object { $AppendLog.Invoke($_) }
+        $AppendLog.Invoke("Script '$CustomScriptLabel' concluido.")
+        Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
+    } catch {
+        $AppendLog.Invoke("ERRO ao executar '$CustomScriptLabel': $($_.Exception.Message)")
+    }
+    $btnCustom.Enabled = $true
+})
+
+# Evento do botão Atualizar lista de instalados
+$script:UninstallMap = @{}
+$btnRefreshInstalled.Add_Click({
+    [System.Windows.Forms.MessageBox]::Show("Botão Atualizar lista clicado!", "Diagnóstico")
+    $btnRefreshInstalled.Enabled = $false
+    $AppendLog.Invoke("Consultando programas instalados no registro...")
+    $clbUninstall.Items.Clear()
+    $script:UninstallMap = @{}
+    $programs = Get-InstalledProgramsList
+    foreach ($p in $programs) {
+        if (-not $script:UninstallMap.ContainsKey($p.DisplayName)) {
+            $cmd = if ($p.QuietUninstallString) { $p.QuietUninstallString } else { $p.UninstallString }
+            $script:UninstallMap[$p.DisplayName] = $cmd
+            [void]$clbUninstall.Items.Add($p.DisplayName)
+        }
+    }
+    $AppendLog.Invoke("$($clbUninstall.Items.Count) programas encontrados.")
+    $btnRefreshInstalled.Enabled = $true
+})
+
+# Evento do botão Desinstalar selecionados
+$btnUninstallSelected.Add_Click({
+    [System.Windows.Forms.MessageBox]::Show("Botão Desinstalar clicado!", "Diagnóstico")
+    $selected = @($clbUninstall.CheckedItems)
+    if ($selected.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("Selecione ao menos um programa para remover.", "Aviso")
+        return
+    }
+
+    $confirm = [System.Windows.Forms.MessageBox]::Show(
+        "Desinstalar os seguintes programas?`n`n$($selected -join "`n")",
+        "Confirmar remocao",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Warning
+    )
+    if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+    $btnUninstallSelected.Enabled = $false
+    $AppendLog.Invoke("== Desinstalando programas selecionados ==")
+    foreach ($name in $selected) {
+        $cmd = $script:UninstallMap[$name]
+        if (-not $cmd) { continue }
+        $AppendLog.Invoke("Desinstalando: $name")
+        try {
+            if ($cmd -match "(?i)msiexec" -and $cmd -notmatch "(?i)/qn|/quiet") {
+                $cmd = "$cmd /quiet /norestart"
+            }
+            Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -Wait -ErrorAction Stop
+            $AppendLog.Invoke("Concluido: $name")
+        } catch {
+            $AppendLog.Invoke("ERRO ao desinstalar '$name': $($_.Exception.Message)")
+        }
+    }
+    $AppendLog.Invoke("Remocao concluida. Clique em 'Atualizar lista' para ver a lista atualizada.")
+    $btnUninstallSelected.Enabled = $true
+})
+
+# Eventos da aba SITEF
 $btnSitefInstall.Add_Click({
-    [System.Windows.Forms.MessageBox]::Show("Botão Instalar SITEF clicado! Iniciando instalação...", "Diagnóstico")
+    [System.Windows.Forms.MessageBox]::Show("Botão Instalar SITEF clicado!", "Diagnóstico")
     $btnSitefInstall.Enabled = $false
     $txtSitefLog.Clear()
     $progressSitef.Value = 0
@@ -472,7 +1054,7 @@ $btnSitefOpenFolder.Add_Click({
 })
 
 # ============================================================
-#  STATUS GERAL E LOG
+#  STATUS GERAL E LOGS
 # ============================================================
 $grpStatus = New-Object System.Windows.Forms.GroupBox
 $grpStatus.Text = "Status Geral"
