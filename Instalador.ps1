@@ -946,8 +946,8 @@ function Install-Sitef {
 
     $sitefDir = "C:\SITEF"
     $zipUrls = @(
-        "http://gsurf.com.br/lib/win/certificado.zip",
-        "http://gsurf.com.br/lib/win/gsclient.zip"
+        @{ url = "http://gsurf.com.br/lib/win/certificado.zip"; nome = "certificado.zip" },
+        @{ url = "http://gsurf.com.br/lib/win/gsclient.zip"; nome = "gsclient.zip" }
     )
 
     # Criar pasta C:\SITEF
@@ -964,33 +964,58 @@ function Install-Sitef {
         $log.Invoke("Diretório $sitefDir já existe.")
     }
 
-    # Baixar e extrair cada ZIP
-    $progressSitef.Maximum = $zipUrls.Count * 2  # download + extração
+    $progressSitef.Maximum = $zipUrls.Count * 2
     $progressSitef.Value = 0
 
-    foreach ($url in $zipUrls) {
-        $fileName = [System.IO.Path]::GetFileName($url)
+    foreach ($item in $zipUrls) {
+        $url = $item.url
+        $fileName = $item.nome
         $zipPath = Join-Path $sitefDir $fileName
         $extractPath = Join-Path $sitefDir ([System.IO.Path]::GetFileNameWithoutExtension($fileName))
 
+        # Baixar
         $log.Invoke("Baixando $fileName ...")
         try {
-            (New-Object System.Net.WebClient).DownloadFile($url, $zipPath)
+            $webClient = New-Object System.Net.WebClient
+            $webClient.DownloadFile($url, $zipPath)
             $log.Invoke("Download concluído: $zipPath")
             $progressSitef.Value += 1
         } catch {
             $log.Invoke("ERRO ao baixar $url : $($_.Exception.Message)")
+            $log.Invoke("Verifique se o arquivo existe no servidor e se a URL está correta.")
             return
         }
 
+        # Verificar se o arquivo baixado é um ZIP válido (cabeçalho PK)
+        $bytes = [System.IO.File]::ReadAllBytes($zipPath)
+        if ($bytes.Count -lt 4 -or $bytes[0] -ne 0x50 -or $bytes[1] -ne 0x4B -or $bytes[2] -ne 0x03 -or $bytes[3] -ne 0x04) {
+            $log.Invoke("ERRO: O arquivo baixado não é um ZIP válido (cabeçalho inválido).")
+            $log.Invoke("O servidor pode ter retornado uma página de erro. Verifique a URL.")
+            # Remove o arquivo corrompido
+            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+            return
+        }
+
+        # Extrair
         $log.Invoke("Extraindo $fileName para $extractPath ...")
         try {
+            if (-not (Test-Path $extractPath)) {
+                New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
+            }
             Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
             $log.Invoke("Extraído com sucesso.")
             $progressSitef.Value += 1
         } catch {
-            $log.Invoke("ERRO ao extrair $zipPath : $($_.Exception.Message)")
-            return
+            $log.Invoke("ERRO ao extrair com Expand-Archive: $($_.Exception.Message)")
+            $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
+            try {
+                [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath, $true)
+                $log.Invoke("Extraído com sucesso via fallback.")
+                $progressSitef.Value += 1
+            } catch {
+                $log.Invoke("Falha na extração: $($_.Exception.Message)")
+                return
+            }
         }
     }
 
@@ -1003,10 +1028,12 @@ function Install-Sitef {
 
     if (-not $msiPath) {
         $log.Invoke("ERRO: Arquivo GSurfRSA_Listener_Setup.msi não encontrado.")
+        $log.Invoke("Verifique se o ZIP foi extraído corretamente e se o nome do arquivo está correto.")
         return
     }
     if (-not $exePath) {
         $log.Invoke("ERRO: Arquivo InstaladorGSurf.exe não encontrado.")
+        $log.Invoke("Verifique se o ZIP foi extraído corretamente e se o nome do arquivo está correto.")
         return
     }
 
