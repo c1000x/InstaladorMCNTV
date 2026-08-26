@@ -392,7 +392,7 @@ foreach ($key in $steps.Keys) {
 
 $chkDryRun = New-Object System.Windows.Forms.CheckBox
 $chkDryRun.Text = "Modo Simulacao (dry-run)"
-$chkDryRun.Location = [System.Drawing.Point]::new(15, ($y + 3))
+$chkDryRun.Location = New-Object System.Drawing.Point(15, ($y + 3))
 $chkDryRun.Size = New-Object System.Drawing.Size(330,22)
 $chkDryRun.ForeColor = [System.Drawing.Color]::DarkBlue
 $grpSystem.Controls.Add($chkDryRun)
