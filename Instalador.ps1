@@ -788,6 +788,63 @@ $txtSitefLog.BackColor = [System.Drawing.Color]::White
 $tabSitef.Controls.Add($txtSitefLog)
 
 # ============================================================
+#  STATUS GERAL E LOGS
+# ============================================================
+$grpStatus = New-Object System.Windows.Forms.GroupBox
+$grpStatus.Text = "Status Geral"
+$grpStatus.Font = $FontHeader
+$grpStatus.ForeColor = $ColorText
+$grpStatus.Location = New-Object System.Drawing.Point($margin, ($topY + $tabHeight + 15))
+$grpStatus.Size = New-Object System.Drawing.Size(($formWidth - $margin*2), $statusHeight)
+$grpStatus.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$contentPanel.Controls.Add($grpStatus)
+
+$progressBar = New-Object System.Windows.Forms.ProgressBar
+$progressBar.Location = New-Object System.Drawing.Point(15, 32)
+$progressBar.Size = New-Object System.Drawing.Size(($formWidth - $margin*2 - 40), 20)
+$progressBar.Minimum = 0
+$progressBar.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$grpStatus.Controls.Add($progressBar)
+
+$lblStatus = New-Object System.Windows.Forms.Label
+$lblStatus.Text = "Pronto para instalar"
+$lblStatus.Font = $FontNormal
+$lblStatus.ForeColor = $ColorSuccess
+$lblStatus.Location = New-Object System.Drawing.Point(15, 57)
+$lblStatus.Size = New-Object System.Drawing.Size(330, 22)
+$grpStatus.Controls.Add($lblStatus)
+
+$txtLog = New-Object System.Windows.Forms.TextBox
+$txtLog.Multiline = $true
+$txtLog.ScrollBars = "Vertical"
+$txtLog.ReadOnly = $true
+$txtLog.Location = New-Object System.Drawing.Point(15, 82)
+$txtLog.Size = New-Object System.Drawing.Size(($formWidth - $margin*2 - 40), 105)
+$txtLog.Font = New-Object System.Drawing.Font("Consolas", 8)
+$txtLog.BackColor = [System.Drawing.Color]::White
+$txtLog.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+$grpStatus.Controls.Add($txtLog)
+
+$AppendLog = {
+    param($msg)
+    $line = "$msg"
+    $txtLog.AppendText("$line`r`n")
+    $txtLog.SelectionStart = $txtLog.Text.Length
+    $txtLog.ScrollToCaret()
+    Add-Content -Path $LogFilePath -Value $line -Encoding UTF8
+    [System.Windows.Forms.Application]::DoEvents()
+}
+
+$script:SitefLogDelegate = {
+    param($msg)
+    $line = "$msg"
+    $txtSitefLog.AppendText("$line`r`n")
+    $txtSitefLog.SelectionStart = $txtSitefLog.Text.Length
+    $txtSitefLog.ScrollToCaret()
+    [System.Windows.Forms.Application]::DoEvents()
+}
+
+# ============================================================
 #  EVENTOS DOS BOTÕES
 # ============================================================
 
@@ -1054,67 +1111,27 @@ $btnSitefOpenFolder.Add_Click({
 })
 
 # ============================================================
-#  STATUS GERAL E LOGS
-# ============================================================
-$grpStatus = New-Object System.Windows.Forms.GroupBox
-$grpStatus.Text = "Status Geral"
-$grpStatus.Font = $FontHeader
-$grpStatus.ForeColor = $ColorText
-$grpStatus.Location = New-Object System.Drawing.Point($margin, ($topY + $tabHeight + 15))
-$grpStatus.Size = New-Object System.Drawing.Size(($formWidth - $margin*2), $statusHeight)
-$grpStatus.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$contentPanel.Controls.Add($grpStatus)
-
-$progressBar = New-Object System.Windows.Forms.ProgressBar
-$progressBar.Location = New-Object System.Drawing.Point(15, 32)
-$progressBar.Size = New-Object System.Drawing.Size(($formWidth - $margin*2 - 40), 20)
-$progressBar.Minimum = 0
-$progressBar.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$grpStatus.Controls.Add($progressBar)
-
-$lblStatus = New-Object System.Windows.Forms.Label
-$lblStatus.Text = "Pronto para instalar"
-$lblStatus.Font = $FontNormal
-$lblStatus.ForeColor = $ColorSuccess
-$lblStatus.Location = New-Object System.Drawing.Point(15, 57)
-$lblStatus.Size = New-Object System.Drawing.Size(330, 22)
-$grpStatus.Controls.Add($lblStatus)
-
-$txtLog = New-Object System.Windows.Forms.TextBox
-$txtLog.Multiline = $true
-$txtLog.ScrollBars = "Vertical"
-$txtLog.ReadOnly = $true
-$txtLog.Location = New-Object System.Drawing.Point(15, 82)
-$txtLog.Size = New-Object System.Drawing.Size(($formWidth - $margin*2 - 40), 105)
-$txtLog.Font = New-Object System.Drawing.Font("Consolas", 8)
-$txtLog.BackColor = [System.Drawing.Color]::White
-$txtLog.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
-$grpStatus.Controls.Add($txtLog)
-
-$AppendLog = {
-    param($msg)
-    $line = "$msg"
-    $txtLog.AppendText("$line`r`n")
-    $txtLog.SelectionStart = $txtLog.Text.Length
-    $txtLog.ScrollToCaret()
-    Add-Content -Path $LogFilePath -Value $line -Encoding UTF8
-    [System.Windows.Forms.Application]::DoEvents()
-}
-
-$script:SitefLogDelegate = {
-    param($msg)
-    $line = "$msg"
-    $txtSitefLog.AppendText("$line`r`n")
-    $txtSitefLog.SelectionStart = $txtSitefLog.Text.Length
-    $txtSitefLog.ScrollToCaret()
-    [System.Windows.Forms.Application]::DoEvents()
-}
-
-# ============================================================
-#  CARREGAR LISTA DE INSTALADOS AO ABRIR
+#  CARREGAR LISTA DE INSTALADOS AO ABRIR (COM VERIFICAÇÃO)
 # ============================================================
 $form.Add_Shown({
-    $btnRefreshInstalled.PerformClick()
+    # Verifica se o botão existe antes de chamar PerformClick
+    if ($btnRefreshInstalled -ne $null) {
+        $btnRefreshInstalled.PerformClick()
+    } else {
+        # Fallback: carrega a lista diretamente
+        $AppendLog.Invoke("Carregando lista de programas instalados...")
+        $clbUninstall.Items.Clear()
+        $script:UninstallMap = @{}
+        $programs = Get-InstalledProgramsList
+        foreach ($p in $programs) {
+            if (-not $script:UninstallMap.ContainsKey($p.DisplayName)) {
+                $cmd = if ($p.QuietUninstallString) { $p.QuietUninstallString } else { $p.UninstallString }
+                $script:UninstallMap[$p.DisplayName] = $cmd
+                [void]$clbUninstall.Items.Add($p.DisplayName)
+            }
+        }
+        $AppendLog.Invoke("$($clbUninstall.Items.Count) programas encontrados.")
+    }
 })
 
 [void]$form.ShowDialog()
