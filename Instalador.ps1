@@ -3,11 +3,8 @@
     Interface grafica para provisionamento de maquinas Windows.
     Pode ser executado localmente ou via: irm <RAW_URL> | iex.
 
-    Coluna esquerda: etapas gerais de provisionamento (roda tudo junto em "Executar").
-    Coluna direita:  instalar programas individuais (lista hardcoded) ou remover programas
-                      ja instalados na maquina, um a um.
-
-    Logs salvos em: logs\provisionamento_<data>.log  e relatorio_<data>.txt
+    Aba "Provisionamento": etapas do sistema, instalação/remoção de apps.
+    Aba "SITEF": instalação específica do ambiente SITEF.
 #>
 
 # ============================================================
@@ -37,17 +34,16 @@ if (-not $isAdmin) {
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 # ============================================================
 #  BOTAO PERSONALIZADO (script externo do GitHub)
-#  Edite as duas linhas abaixo: link raw do script e o texto do botao.
 # ============================================================
 $CustomScriptUrl   = "https://get.activated.win"
 $CustomScriptLabel = "Ativar Windows"
 
 # ============================================================
-#  LISTAS DE APLICATIVOS (hardcoded, sem JSON)
-#  Edite aqui para adicionar/remover programas.
+#  LISTAS DE APLICATIVOS (hardcoded)
 # ============================================================
 $ChocoApps = @(
     "googlechrome"
@@ -62,7 +58,7 @@ $WingetApps = @(
 )
 
 $WingetStoreApps = @(
-    "9WZDNCRFJBMP"   # Microsoft Store app exemplo
+    "9WZDNCRFJBMP"
 )
 
 # ============================================================
@@ -80,7 +76,7 @@ $script:Results = [ordered]@{}
 $script:CancelRequested = $false
 
 # ============================================================
-#  FUNCOES DE CADA ETAPA
+#  FUNCOES DE CADA ETAPA (Provisionamento)
 # ============================================================
 
 function Step-RestorePoint {
@@ -312,8 +308,8 @@ $margin     = 20
 $gap        = 15
 $colW       = 365
 $topY       = 78
-$groupH     = 430
-$col1X      = $margin
+$groupH     = 400
+$col1X      = 10
 $col2X      = $col1X + $colW + $gap
 $col3X      = $col2X + $colW + $gap
 
@@ -344,14 +340,29 @@ $lblSubtitle.Location = New-Object System.Drawing.Point($margin,45)
 $lblSubtitle.Size = New-Object System.Drawing.Size(500,22)
 $form.Controls.Add($lblSubtitle)
 
+# ---------- TABCONTROL ----------
+$tabControl = New-Object System.Windows.Forms.TabControl
+$tabControl.Location = New-Object System.Drawing.Point($margin, 75)
+$tabControl.Size = New-Object System.Drawing.Size(($formWidth - $margin*2), 430)
+$tabControl.Font = $FontNormal
+$form.Controls.Add($tabControl)
+
+# ============================================================
+#  ABA 1: PROVISIONAMENTO
+# ============================================================
+$tabProvisioning = New-Object System.Windows.Forms.TabPage
+$tabProvisioning.Text = "Provisionamento"
+$tabProvisioning.BackColor = $ColorBackground
+$tabControl.Controls.Add($tabProvisioning)
+
 # ---------- GRUPO 1: ETAPAS DO SISTEMA ----------
 $grpSystem = New-Object System.Windows.Forms.GroupBox
 $grpSystem.Text = "1. Configuracao do sistema"
 $grpSystem.Font = $FontHeader
 $grpSystem.ForeColor = $ColorText
-$grpSystem.Location = New-Object System.Drawing.Point($col1X,$topY)
+$grpSystem.Location = New-Object System.Drawing.Point($col1X,10)
 $grpSystem.Size = New-Object System.Drawing.Size($colW,$groupH)
-$form.Controls.Add($grpSystem)
+$tabProvisioning.Controls.Add($grpSystem)
 
 $steps = [ordered]@{
     "Ponto de Restauracao"                  = { param($l,$d) Step-RestorePoint -Log $l -DryRun $d }
@@ -391,7 +402,7 @@ $grpSystem.Controls.Add($chkDryRun)
 
 $btnSelAll = New-Object System.Windows.Forms.Button
 $btnSelAll.Text = "Marcar todos"
-$btnSelAll.Location = New-Object System.Drawing.Point(15,335)
+$btnSelAll.Location = New-Object System.Drawing.Point(15,305)
 $btnSelAll.Size = New-Object System.Drawing.Size(160,30)
 $btnSelAll.Font = $FontButton
 $btnSelAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -402,7 +413,7 @@ $grpSystem.Controls.Add($btnSelAll)
 
 $btnSelNone = New-Object System.Windows.Forms.Button
 $btnSelNone.Text = "Desmarcar todos"
-$btnSelNone.Location = New-Object System.Drawing.Point(190,335)
+$btnSelNone.Location = New-Object System.Drawing.Point(190,305)
 $btnSelNone.Size = New-Object System.Drawing.Size(160,30)
 $btnSelNone.Font = $FontButton
 $btnSelNone.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -413,7 +424,7 @@ $grpSystem.Controls.Add($btnSelNone)
 
 $btnRun = New-Object System.Windows.Forms.Button
 $btnRun.Text = "Executar configuracao"
-$btnRun.Location = New-Object System.Drawing.Point(15,375)
+$btnRun.Location = New-Object System.Drawing.Point(15,350)
 $btnRun.Size = New-Object System.Drawing.Size(335,30)
 $btnRun.Font = $FontButton
 $btnRun.BackColor = $ColorPrimary
@@ -427,9 +438,9 @@ $grpInstall = New-Object System.Windows.Forms.GroupBox
 $grpInstall.Text = "2. Instalar aplicativos"
 $grpInstall.Font = $FontHeader
 $grpInstall.ForeColor = $ColorText
-$grpInstall.Location = New-Object System.Drawing.Point($col2X,$topY)
+$grpInstall.Location = New-Object System.Drawing.Point($col2X,10)
 $grpInstall.Size = New-Object System.Drawing.Size($colW,$groupH)
-$form.Controls.Add($grpInstall)
+$tabProvisioning.Controls.Add($grpInstall)
 
 $lblInstallInfo = New-Object System.Windows.Forms.Label
 $lblInstallInfo.Text = "Buscar:"
@@ -447,16 +458,14 @@ $grpInstall.Controls.Add($txtSearchInstall)
 
 $clbInstall = New-Object System.Windows.Forms.CheckedListBox
 $clbInstall.Location = New-Object System.Drawing.Point(15,58)
-$clbInstall.Size = New-Object System.Drawing.Size(330,290)
+$clbInstall.Size = New-Object System.Drawing.Size(330,265)
 $clbInstall.CheckOnClick = $true
 $clbInstall.Font = $FontNormal
-# Preencher com todos os labels
 $allLabels = Build-AppCatalogLabels
-$clbInstall.Tag = $allLabels   # guarda a lista completa
+$clbInstall.Tag = $allLabels
 foreach ($label in $allLabels) { [void]$clbInstall.Items.Add($label,$true) }
 $grpInstall.Controls.Add($clbInstall)
 
-# Evento de filtro
 $txtSearchInstall.Add_TextChanged({
     $search = $txtSearchInstall.Text.Trim().ToLower()
     $clbInstall.BeginUpdate()
@@ -476,7 +485,7 @@ $txtSearchInstall.Add_TextChanged({
 
 $btnInstallSelected = New-Object System.Windows.Forms.Button
 $btnInstallSelected.Text = "INSTALAR SELECIONADOS (Paralelo)"
-$btnInstallSelected.Location = New-Object System.Drawing.Point(15,358)
+$btnInstallSelected.Location = New-Object System.Drawing.Point(15,335)
 $btnInstallSelected.Size = New-Object System.Drawing.Size(330,40)
 $btnInstallSelected.Font = New-Object System.Drawing.Font("Segoe UI Semibold",10)
 $btnInstallSelected.BackColor = $ColorSuccess
@@ -490,9 +499,9 @@ $grpUninstall = New-Object System.Windows.Forms.GroupBox
 $grpUninstall.Text = "3. Gerenciar aplicativos instalados"
 $grpUninstall.Font = $FontHeader
 $grpUninstall.ForeColor = $ColorText
-$grpUninstall.Location = New-Object System.Drawing.Point($col3X,$topY)
+$grpUninstall.Location = New-Object System.Drawing.Point($col3X,10)
 $grpUninstall.Size = New-Object System.Drawing.Size($colW,$groupH)
-$form.Controls.Add($grpUninstall)
+$tabProvisioning.Controls.Add($grpUninstall)
 
 $lblUninstallInfo = New-Object System.Windows.Forms.Label
 $lblUninstallInfo.Text = "Atualize a lista e selecione o que deseja remover:"
@@ -504,14 +513,14 @@ $grpUninstall.Controls.Add($lblUninstallInfo)
 
 $clbUninstall = New-Object System.Windows.Forms.CheckedListBox
 $clbUninstall.Location = New-Object System.Drawing.Point(15,58)
-$clbUninstall.Size = New-Object System.Drawing.Size(330,270)
+$clbUninstall.Size = New-Object System.Drawing.Size(330,245)
 $clbUninstall.CheckOnClick = $true
 $clbUninstall.Font = $FontNormal
 $grpUninstall.Controls.Add($clbUninstall)
 
 $btnRefreshInstalled = New-Object System.Windows.Forms.Button
 $btnRefreshInstalled.Text = "Atualizar lista"
-$btnRefreshInstalled.Location = New-Object System.Drawing.Point(15,340)
+$btnRefreshInstalled.Location = New-Object System.Drawing.Point(15,315)
 $btnRefreshInstalled.Size = New-Object System.Drawing.Size(160,30)
 $btnRefreshInstalled.Font = $FontButton
 $btnRefreshInstalled.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -521,7 +530,7 @@ $grpUninstall.Controls.Add($btnRefreshInstalled)
 
 $btnUninstallSelected = New-Object System.Windows.Forms.Button
 $btnUninstallSelected.Text = "Desinstalar selecionados"
-$btnUninstallSelected.Location = New-Object System.Drawing.Point(190,340)
+$btnUninstallSelected.Location = New-Object System.Drawing.Point(190,315)
 $btnUninstallSelected.Size = New-Object System.Drawing.Size(160,30)
 $btnUninstallSelected.Font = $FontButton
 $btnUninstallSelected.BackColor = $ColorDanger
@@ -530,10 +539,9 @@ $btnUninstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnUninstallSelected.FlatAppearance.BorderSize = 0
 $grpUninstall.Controls.Add($btnUninstallSelected)
 
-# ---------- ACAO PERSONALIZADA (segura) ----------
 $btnCustom = New-Object System.Windows.Forms.Button
 $btnCustom.Text = $CustomScriptLabel
-$btnCustom.Location = New-Object System.Drawing.Point(15,380)
+$btnCustom.Location = New-Object System.Drawing.Point(15,355)
 $btnCustom.Size = New-Object System.Drawing.Size(335,30)
 $btnCustom.Font = $FontButton
 $btnCustom.BackColor = $ColorSurface
@@ -541,13 +549,100 @@ $btnCustom.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnCustom.FlatAppearance.BorderColor = $ColorBorder
 $grpUninstall.Controls.Add($btnCustom)
 
-# ---------- STATUS E LOG ----------
+# ============================================================
+#  ABA 2: SITEF
+# ============================================================
+$tabSitef = New-Object System.Windows.Forms.TabPage
+$tabSitef.Text = "SITEF"
+$tabSitef.BackColor = $ColorBackground
+$tabControl.Controls.Add($tabSitef)
+
+# Título da aba
+$lblSitefTitle = New-Object System.Windows.Forms.Label
+$lblSitefTitle.Text = "Instalação do Ambiente SITEF"
+$lblSitefTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
+$lblSitefTitle.ForeColor = $ColorText
+$lblSitefTitle.Location = New-Object System.Drawing.Point(20,20)
+$lblSitefTitle.Size = New-Object System.Drawing.Size(400,25)
+$tabSitef.Controls.Add($lblSitefTitle)
+
+$lblSitefDesc = New-Object System.Windows.Forms.Label
+$lblSitefDesc.Text = "Esta etapa irá baixar, extrair e executar os instaladores do SITEF.`n" +
+                     "Após a execução, você deverá configurar manualmente os programas.`n" +
+                     "Ao fechar os instaladores, o serviço 'GSurfRSA Listener' será iniciado."
+$lblSitefDesc.Font = $FontNormal
+$lblSitefDesc.ForeColor = $ColorMuted
+$lblSitefDesc.Location = New-Object System.Drawing.Point(20,55)
+$lblSitefDesc.Size = New-Object System.Drawing.Size(700,60)
+$tabSitef.Controls.Add($lblSitefDesc)
+
+# Botões
+$btnSitefInstall = New-Object System.Windows.Forms.Button
+$btnSitefInstall.Text = "Instalar SITEF"
+$btnSitefInstall.Location = New-Object System.Drawing.Point(20,130)
+$btnSitefInstall.Size = New-Object System.Drawing.Size(180,35)
+$btnSitefInstall.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+$btnSitefInstall.BackColor = $ColorPrimary
+$btnSitefInstall.ForeColor = [System.Drawing.Color]::White
+$btnSitefInstall.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$tabSitef.Controls.Add($btnSitefInstall)
+
+$btnSitefOpenFolder = New-Object System.Windows.Forms.Button
+$btnSitefOpenFolder.Text = "Abrir pasta C:\SITEF"
+$btnSitefOpenFolder.Location = New-Object System.Drawing.Point(220,130)
+$btnSitefOpenFolder.Size = New-Object System.Drawing.Size(160,35)
+$btnSitefOpenFolder.Font = $FontButton
+$btnSitefOpenFolder.BackColor = $ColorSurface
+$btnSitefOpenFolder.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnSitefOpenFolder.FlatAppearance.BorderColor = $ColorBorder
+$tabSitef.Controls.Add($btnSitefOpenFolder)
+
+# Progresso específico do SITEF
+$progressSitef = New-Object System.Windows.Forms.ProgressBar
+$progressSitef.Location = New-Object System.Drawing.Point(20,180)
+$progressSitef.Size = New-Object System.Drawing.Size(700,20)
+$progressSitef.Minimum = 0
+$progressSitef.Maximum = 100
+$tabSitef.Controls.Add($progressSitef)
+
+# Log específico do SITEF
+$lblSitefLog = New-Object System.Windows.Forms.Label
+$lblSitefLog.Text = "Log da instalação SITEF:"
+$lblSitefLog.Font = $FontNormal
+$lblSitefLog.ForeColor = $ColorMuted
+$lblSitefLog.Location = New-Object System.Drawing.Point(20,215)
+$lblSitefLog.Size = New-Object System.Drawing.Size(200,22)
+$tabSitef.Controls.Add($lblSitefLog)
+
+$txtSitefLog = New-Object System.Windows.Forms.TextBox
+$txtSitefLog.Multiline = $true
+$txtSitefLog.ScrollBars = "Vertical"
+$txtSitefLog.ReadOnly = $true
+$txtSitefLog.Location = New-Object System.Drawing.Point(20,240)
+$txtSitefLog.Size = New-Object System.Drawing.Size(700,140)
+$txtSitefLog.Font = New-Object System.Drawing.Font("Consolas",8)
+$txtSitefLog.BackColor = [System.Drawing.Color]::White
+$tabSitef.Controls.Add($txtSitefLog)
+
+# Variável para o log do SITEF
+$script:SitefLogDelegate = {
+    param($msg)
+    $line = "$msg"
+    $txtSitefLog.AppendText("$line`r`n")
+    $txtSitefLog.SelectionStart = $txtSitefLog.Text.Length
+    $txtSitefLog.ScrollToCaret()
+    [System.Windows.Forms.Application]::DoEvents()
+}
+
+# ============================================================
+#  STATUS (compartilhado)
+# ============================================================
 $grpStatus = New-Object System.Windows.Forms.GroupBox
-$grpStatus.Text = "Status"
+$grpStatus.Text = "Status Geral"
 $grpStatus.Font = $FontHeader
 $grpStatus.ForeColor = $ColorText
-$grpStatus.Location = New-Object System.Drawing.Point($margin,525)
-$grpStatus.Size = New-Object System.Drawing.Size(($formWidth - ($margin*2)),205)
+$grpStatus.Location = New-Object System.Drawing.Point($margin, 515)
+$grpStatus.Size = New-Object System.Drawing.Size(($formWidth - ($margin*2)), 210)
 $form.Controls.Add($grpStatus)
 
 $progressBar = New-Object System.Windows.Forms.ProgressBar
@@ -575,8 +670,20 @@ $txtLog.BackColor = [System.Drawing.Color]::White
 $txtLog.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
 $grpStatus.Controls.Add($txtLog)
 
+$btnCancel = New-Object System.Windows.Forms.Button
+$btnCancel.Text = "Cancelar"
+$btnCancel.Location = New-Object System.Drawing.Point(($formWidth - 120), 57)
+$btnCancel.Size = New-Object System.Drawing.Size(80, 22)
+$btnCancel.Font = $FontButton
+$btnCancel.BackColor = $ColorDanger
+$btnCancel.ForeColor = [System.Drawing.Color]::White
+$btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnCancel.Visible = $false
+$btnCancel.Enabled = $false
+$grpStatus.Controls.Add($btnCancel)
+
 # ============================================================
-#  FUNCAO DE LOG
+#  FUNCAO DE LOG GERAL
 # ============================================================
 $AppendLog = {
     param($msg)
@@ -589,7 +696,7 @@ $AppendLog = {
 }
 
 # ============================================================
-#  BOTÃO EXECUTAR (VERSÃO SINCRONA - FUNCIONAL)
+#  BOTÃO EXECUTAR (Provisionamento - síncrono)
 # ============================================================
 $btnRun.Add_Click({
     $btnRun.Enabled = $false
@@ -634,7 +741,6 @@ $btnRun.Add_Click({
     $AppendLog.Invoke("")
     $AppendLog.Invoke("=== PROVISIONAMENTO CONCLUÍDO ===")
 
-    # Gera relatório
     $reportLines = @()
     $reportLines += "Relatorio de Provisionamento - $Timestamp"
     $reportLines += "Modo: $(if ($DryRun) {'SIMULACAO'} else {'EXECUCAO REAL'})"
@@ -679,7 +785,6 @@ $btnInstallSelected.Add_Click({
     $totalJobs = $selectedLabels.Count
     $completed = 0
 
-    # Função para instalar um app em um job
     foreach ($label in $selectedLabels) {
         $info = $script:AppCatalogMap[$label]
         if (-not $info) { continue }
@@ -715,10 +820,8 @@ $btnInstallSelected.Add_Click({
         $jobs += $job
     }
 
-    # Aguardar todos os jobs completarem e coletar saídas
     while ($jobs | Where-Object { $_.State -eq 'Running' }) {
         Start-Sleep -Milliseconds 500
-        # Atualizar progresso
         $running = ($jobs | Where-Object { $_.State -eq 'Running' }).Count
         $completed = $totalJobs - $running
         $lblStatus.Text = "Instalando... $completed de $totalJobs concluidos"
@@ -726,7 +829,6 @@ $btnInstallSelected.Add_Click({
         [System.Windows.Forms.Application]::DoEvents()
     }
 
-    # Coletar resultados
     foreach ($job in $jobs) {
         $output = Receive-Job -Job $job -ErrorAction SilentlyContinue
         if ($output) {
@@ -764,17 +866,10 @@ $btnCustom.Add_Click({
 
     try {
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        # Baixa para um arquivo temporário
         $tempScript = Join-Path $env:TEMP "MCNTV_custom_$(Get-Random).ps1"
         (New-Object System.Net.WebClient).DownloadFile($CustomScriptUrl, $tempScript)
 
-        # Opcional: verificar hash (descomente e substitua pelo hash esperado)
-        # $hash = (Get-FileHash $tempScript -Algorithm SHA256).Hash
-        # $expectedHash = "SEU_HASH_AQUI"
-        # if ($hash -ne $expectedHash) { throw "Hash do script nao confere. Execucao cancelada." }
-
         $AppendLog.Invoke("Script baixado para $tempScript")
-        # Executa com & (mais seguro que iex)
         & $tempScript 2>&1 | ForEach-Object { $AppendLog.Invoke($_) }
         $AppendLog.Invoke("Script '$CustomScriptLabel' concluido.")
         Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
@@ -841,7 +936,153 @@ $btnUninstallSelected.Add_Click({
     $btnUninstallSelected.Enabled = $true
 })
 
-# Carregar lista de instalados ao abrir o formulário
+# ============================================================
+#  FUNÇÃO PARA INSTALAÇÃO DO SITEF
+# ============================================================
+function Install-Sitef {
+    $log = $script:SitefLogDelegate
+    $log.Invoke("=== INICIANDO INSTALAÇÃO SITEF ===")
+    $log.Invoke("")
+
+    $sitefDir = "C:\SITEF"
+    $zipUrls = @(
+        "http://gsurf.com.br/lib/win/certificado.zip",
+        "http://gsurf.com.br/lib/win/gsclient.zip"
+    )
+
+    # Criar pasta C:\SITEF
+    if (-not (Test-Path $sitefDir)) {
+        $log.Invoke("Criando diretório $sitefDir ...")
+        try {
+            New-Item -ItemType Directory -Path $sitefDir -Force | Out-Null
+            $log.Invoke("Diretório criado com sucesso.")
+        } catch {
+            $log.Invoke("ERRO ao criar diretório: $($_.Exception.Message)")
+            return
+        }
+    } else {
+        $log.Invoke("Diretório $sitefDir já existe.")
+    }
+
+    # Baixar e extrair cada ZIP
+    $progressSitef.Maximum = $zipUrls.Count * 2  # download + extração
+    $progressSitef.Value = 0
+
+    foreach ($url in $zipUrls) {
+        $fileName = [System.IO.Path]::GetFileName($url)
+        $zipPath = Join-Path $sitefDir $fileName
+        $extractPath = Join-Path $sitefDir ([System.IO.Path]::GetFileNameWithoutExtension($fileName))
+
+        $log.Invoke("Baixando $fileName ...")
+        try {
+            (New-Object System.Net.WebClient).DownloadFile($url, $zipPath)
+            $log.Invoke("Download concluído: $zipPath")
+            $progressSitef.Value += 1
+        } catch {
+            $log.Invoke("ERRO ao baixar $url : $($_.Exception.Message)")
+            return
+        }
+
+        $log.Invoke("Extraindo $fileName para $extractPath ...")
+        try {
+            Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+            $log.Invoke("Extraído com sucesso.")
+            $progressSitef.Value += 1
+        } catch {
+            $log.Invoke("ERRO ao extrair $zipPath : $($_.Exception.Message)")
+            return
+        }
+    }
+
+    $log.Invoke("")
+    $log.Invoke("Arquivos baixados e extraídos.")
+
+    # Localizar e executar os instaladores
+    $msiPath = Get-ChildItem -Path $sitefDir -Recurse -Filter "GSurfRSA_Listener_Setup.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $exePath = Get-ChildItem -Path $sitefDir -Recurse -Filter "InstaladorGSurf.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+    if (-not $msiPath) {
+        $log.Invoke("ERRO: Arquivo GSurfRSA_Listener_Setup.msi não encontrado.")
+        return
+    }
+    if (-not $exePath) {
+        $log.Invoke("ERRO: Arquivo InstaladorGSurf.exe não encontrado.")
+        return
+    }
+
+    $log.Invoke("")
+    $log.Invoke("Executando instalador MSI: $($msiPath.FullName)")
+    try {
+        Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$($msiPath.FullName)`"" -Wait
+        $log.Invoke("Instalador MSI concluído.")
+    } catch {
+        $log.Invoke("ERRO ao executar MSI: $($_.Exception.Message)")
+    }
+
+    $log.Invoke("Executando instalador EXE: $($exePath.FullName)")
+    try {
+        Start-Process -FilePath $exePath.FullName -Wait
+        $log.Invoke("Instalador EXE concluído.")
+    } catch {
+        $log.Invoke("ERRO ao executar EXE: $($_.Exception.Message)")
+    }
+
+    $log.Invoke("")
+    $log.Invoke("Aguardando 5 segundos antes de iniciar o serviço...")
+    Start-Sleep -Seconds 5
+
+    # Iniciar serviço GSurfRSA Listener
+    $serviceName = "GSurfRSA Listener"
+    $log.Invoke("Verificando serviço '$serviceName'...")
+    $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($svc) {
+        if ($svc.Status -eq 'Stopped') {
+            try {
+                Start-Service -Name $serviceName -ErrorAction Stop
+                $log.Invoke("Serviço '$serviceName' iniciado com sucesso.")
+            } catch {
+                $log.Invoke("ERRO ao iniciar serviço: $($_.Exception.Message)")
+            }
+        } else {
+            $log.Invoke("Serviço já está em execução (Status: $($svc.Status)).")
+        }
+    } else {
+        $log.Invoke("Serviço '$serviceName' não encontrado. Verifique se a instalação foi concluída corretamente.")
+    }
+
+    $log.Invoke("")
+    $log.Invoke("=== INSTALAÇÃO SITEF CONCLUÍDA ===")
+    $progressSitef.Value = $progressSitef.Maximum
+    [System.Windows.Forms.MessageBox]::Show("Instalação SITEF concluída! Verifique o log para detalhes.", "SITEF")
+}
+
+# ============================================================
+#  EVENTOS DA ABA SITEF
+# ============================================================
+$btnSitefInstall.Add_Click({
+    $btnSitefInstall.Enabled = $false
+    $txtSitefLog.Clear()
+    $progressSitef.Value = 0
+    try {
+        Install-Sitef
+    } catch {
+        $script:SitefLogDelegate.Invoke("ERRO inesperado: $($_.Exception.Message)")
+    }
+    $btnSitefInstall.Enabled = $true
+})
+
+$btnSitefOpenFolder.Add_Click({
+    $sitefDir = "C:\SITEF"
+    if (Test-Path $sitefDir) {
+        explorer $sitefDir
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("A pasta C:\SITEF ainda não existe. Execute a instalação primeiro.", "Pasta não encontrada")
+    }
+})
+
+# ============================================================
+#  CARREGAR LISTA DE INSTALADOS AO ABRIR
+# ============================================================
 $form.Add_Shown({
     $btnRefreshInstalled.PerformClick()
 })
