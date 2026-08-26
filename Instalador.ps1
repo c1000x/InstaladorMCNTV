@@ -1,9 +1,3 @@
-# ============================================================
-#  LAYOUT DOS BOTOES
-# ============================================================
-# Os botoes foram alinhados no mesmo eixo vertical (mesmo Y),
-# mantendo as posições horizontais existentes.
-
 <#
     ProvisioningTool.ps1
     Interface grafica para provisionamento de maquinas Windows.
@@ -389,6 +383,184 @@ $chkDryRun.ForeColor = [System.Drawing.Color]::DarkBlue
 $form.Controls.Add($chkDryRun)
 
 $y += 30
+
+# ============================================================
+#  REDESIGN VISUAL - MCNTV INSTALLER
+# ============================================================
+# Organização:
+#   1. Cabeçalho
+#   2. Lista de aplicativos
+#   3. Ações secundárias
+#   4. Ação principal de instalação
+#   5. Status/progresso
+#
+# A lógica dos eventos e instalação permanece a mesma.
+# ============================================================
+
+# Paleta
+$ColorPrimary   = [System.Drawing.Color]::FromArgb(0, 120, 215)
+$ColorPrimaryDark = [System.Drawing.Color]::FromArgb(0, 90, 158)
+$ColorBackground = [System.Drawing.Color]::FromArgb(245, 247, 250)
+$ColorSurface    = [System.Drawing.Color]::White
+$ColorText       = [System.Drawing.Color]::FromArgb(35, 38, 42)
+$ColorMuted      = [System.Drawing.Color]::FromArgb(100, 108, 118)
+$ColorBorder     = [System.Drawing.Color]::FromArgb(220, 224, 230)
+$ColorSuccess    = [System.Drawing.Color]::FromArgb(40, 150, 90)
+$ColorDanger     = [System.Drawing.Color]::FromArgb(190, 55, 55)
+
+# Fonte padrão
+$FontNormal = New-Object System.Drawing.Font("Segoe UI", 9)
+$FontSmall  = New-Object System.Drawing.Font("Segoe UI", 8)
+$FontTitle  = New-Object System.Drawing.Font("Segoe UI Semibold", 18)
+$FontHeader = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+$FontButton = New-Object System.Drawing.Font("Segoe UI Semibold", 9)
+
+# Form principal
+if ($form) {
+    $form.BackColor = $ColorBackground
+    $form.Font = $FontNormal
+    $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedSingle
+    $form.MaximizeBox = $false
+}
+
+# Cabeçalho
+$lblTitle = New-Object System.Windows.Forms.Label
+$lblTitle.Text = "MCNTV Installer"
+$lblTitle.Font = $FontTitle
+$lblTitle.ForeColor = $ColorText
+$lblTitle.AutoSize = $true
+$lblTitle.Location = New-Object System.Drawing.Point(28, 20)
+
+$lblSubtitle = New-Object System.Windows.Forms.Label
+$lblSubtitle.Text = "Instale e gerencie os aplicativos deste computador"
+$lblSubtitle.Font = $FontNormal
+$lblSubtitle.ForeColor = $ColorMuted
+$lblSubtitle.AutoSize = $true
+$lblSubtitle.Location = New-Object System.Drawing.Point(30, 54)
+
+if ($form) {
+    $form.Controls.Add($lblTitle)
+    $form.Controls.Add($lblSubtitle)
+}
+
+# Títulos de seção
+$lblAppsHeader = New-Object System.Windows.Forms.Label
+$lblAppsHeader.Text = "APLICATIVOS"
+$lblAppsHeader.Font = $FontHeader
+$lblAppsHeader.ForeColor = $ColorText
+$lblAppsHeader.AutoSize = $true
+$lblAppsHeader.Location = New-Object System.Drawing.Point(30, 92)
+
+$lblManageHeader = New-Object System.Windows.Forms.Label
+$lblManageHeader.Text = "GERENCIAMENTO"
+$lblManageHeader.Font = $FontHeader
+$lblManageHeader.ForeColor = $ColorText
+$lblManageHeader.AutoSize = $true
+$lblManageHeader.Location = New-Object System.Drawing.Point(30, 430)
+
+if ($form) {
+    $form.Controls.Add($lblAppsHeader)
+    $form.Controls.Add($lblManageHeader)
+}
+
+# Estilo dos botões existentes
+foreach ($buttonName in @("btnSelAll","btnSelNone","btnEditApps","btnCustom","btnRefreshInstalled","btnUninstallSelected")) {
+    $ctrl = Get-Variable -Name $buttonName -ErrorAction SilentlyContinue
+    if ($ctrl -and $ctrl.Value -is [System.Windows.Forms.Button]) {
+        $b = $ctrl.Value
+        $b.Font = $FontButton
+        $b.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+        $b.FlatAppearance.BorderColor = $ColorBorder
+        $b.BackColor = $ColorSurface
+        $b.ForeColor = $ColorText
+        $b.Height = 34
+        $b.Cursor = [System.Windows.Forms.Cursors]::Hand
+    }
+}
+
+# Botão principal
+if ($btnInstallSelected) {
+    $btnInstallSelected.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+    $btnInstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btnInstallSelected.BackColor = $ColorPrimary
+    $btnInstallSelected.ForeColor = [System.Drawing.Color]::White
+    $btnInstallSelected.FlatAppearance.BorderSize = 0
+    $btnInstallSelected.Height = 42
+    $btnInstallSelected.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $btnInstallSelected.Text = "INSTALAR SELECIONADOS"
+}
+
+if ($btnUninstallSelected) {
+    $btnUninstallSelected.ForeColor = $ColorDanger
+}
+
+# Botões de seleção: mesma linha
+if ($btnSelAll) {
+    $btnSelAll.Text = "Selecionar todos"
+    $btnSelAll.Location = New-Object System.Drawing.Point(30, 385)
+    $btnSelAll.Width = 135
+}
+if ($btnSelNone) {
+    $btnSelNone.Text = "Limpar seleção"
+    $btnSelNone.Location = New-Object System.Drawing.Point(175, 385)
+    $btnSelNone.Width = 125
+}
+
+# Gerenciamento: mesma linha
+if ($btnEditApps) {
+    $btnEditApps.Text = "Editar aplicativos"
+    $btnEditApps.Location = New-Object System.Drawing.Point(30, 455)
+    $btnEditApps.Width = 145
+}
+if ($btnRefreshInstalled) {
+    $btnRefreshInstalled.Text = "Atualizar lista"
+    $btnRefreshInstalled.Location = New-Object System.Drawing.Point(185, 455)
+    $btnRefreshInstalled.Width = 120
+}
+if ($btnCustom) {
+    $btnCustom.Text = "Personalizar"
+    $btnCustom.Location = New-Object System.Drawing.Point(315, 455)
+    $btnCustom.Width = 110
+}
+if ($btnUninstallSelected) {
+    $btnUninstallSelected.Text = "Desinstalar"
+    $btnUninstallSelected.Location = New-Object System.Drawing.Point(435, 455)
+    $btnUninstallSelected.Width = 110
+}
+
+# Ação principal
+if ($btnInstallSelected) {
+    $btnInstallSelected.Location = New-Object System.Drawing.Point(30, 510)
+    $btnInstallSelected.Width = 515
+}
+
+# Status
+$lblStatusHeader = New-Object System.Windows.Forms.Label
+$lblStatusHeader.Text = "STATUS"
+$lblStatusHeader.Font = $FontHeader
+$lblStatusHeader.ForeColor = $ColorText
+$lblStatusHeader.AutoSize = $true
+$lblStatusHeader.Location = New-Object System.Drawing.Point(30, 570)
+
+$lblStatusRedesign = New-Object System.Windows.Forms.Label
+$lblStatusRedesign.Text = "●  Pronto para instalar"
+$lblStatusRedesign.Font = $FontNormal
+$lblStatusRedesign.ForeColor = $ColorSuccess
+$lblStatusRedesign.AutoSize = $true
+$lblStatusRedesign.Location = New-Object System.Drawing.Point(30, 598)
+
+if ($form) {
+    $form.Controls.Add($lblStatusHeader)
+    $form.Controls.Add($lblStatusRedesign)
+}
+
+# Ajuste final da janela para o novo layout.
+if ($form) {
+    $form.ClientSize = New-Object System.Drawing.Size(575, 640)
+}
+
+
 $btnSelAll = New-Object System.Windows.Forms.Button
 $btnSelAll.Text = "Marcar todos"
 $btnSelAll.Location = New-Object System.Drawing.Point($col1X, $y)
@@ -711,4 +883,23 @@ $btnUninstallSelected.Add_Click({
     $btnUninstallSelected.Enabled = $true
 })
 
-[void]$form.ShowDialog()
+[void]
+# ============================================================
+#  APLICAR LAYOUT FINAL
+# ============================================================
+# Este bloco fica imediatamente antes da abertura da janela para
+# garantir que posições definidas anteriormente não sobrescrevam o redesign.
+
+if ($btnSelAll)    { $btnSelAll.Location = New-Object System.Drawing.Point(30,385) }
+if ($btnSelNone)   { $btnSelNone.Location = New-Object System.Drawing.Point(175,385) }
+if ($btnEditApps)  { $btnEditApps.Location = New-Object System.Drawing.Point(30,455) }
+if ($btnRefreshInstalled) { $btnRefreshInstalled.Location = New-Object System.Drawing.Point(185,455) }
+if ($btnCustom)    { $btnCustom.Location = New-Object System.Drawing.Point(315,455) }
+if ($btnUninstallSelected) { $btnUninstallSelected.Location = New-Object System.Drawing.Point(435,455) }
+if ($btnInstallSelected) {
+    $btnInstallSelected.Location = New-Object System.Drawing.Point(30,510)
+    $btnInstallSelected.Width = 515
+    $btnInstallSelected.Height = 42
+}
+
+$form.ShowDialog()
