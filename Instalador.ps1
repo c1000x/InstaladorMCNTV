@@ -575,21 +575,6 @@ $txtLog.BackColor = [System.Drawing.Color]::White
 $txtLog.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
 $grpStatus.Controls.Add($txtLog)
 
-# ---------- BOTAO CANCELAR (DESATIVADO) ----------
-# Como a versão atual é síncrona, o botão Cancelar não é necessário.
-# Mantenho apenas para compatibilidade, mas oculto.
-$btnCancel = New-Object System.Windows.Forms.Button
-$btnCancel.Text = "Cancelar"
-$btnCancel.Location = New-Object System.Drawing.Point(($formWidth - 120), 57)
-$btnCancel.Size = New-Object System.Drawing.Size(80, 22)
-$btnCancel.Font = $FontButton
-$btnCancel.BackColor = $ColorDanger
-$btnCancel.ForeColor = [System.Drawing.Color]::White
-$btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$btnCancel.Visible = $false
-$btnCancel.Enabled = $false
-$grpStatus.Controls.Add($btnCancel)
-
 # ============================================================
 #  FUNCAO DE LOG
 # ============================================================
