@@ -1086,26 +1086,173 @@ function Install-Sitef {
 # ============================================================
 #  EVENTOS DA ABA SITEF
 # ============================================================
-$btnSitefInstall.Add_Click({
-    $btnSitefInstall.Enabled = $false
-    $txtSitefLog.Clear()
-    $progressSitef.Value = 0
-    try {
-        Install-Sitef
-    } catch {
-        $script:SitefLogDelegate.Invoke("ERRO inesperado: $($_.Exception.Message)")
-    }
-    $btnSitefInstall.Enabled = $true
-})
+function Install-Sitef {
+    $log = $script:SitefLogDelegate
+    $log.Invoke("=== INICIANDO INSTALAÇÃO SITEF ===")
+    $log.Invoke("")
 
-$btnSitefOpenFolder.Add_Click({
     $sitefDir = "C:\SITEF"
-    if (Test-Path $sitefDir) {
-        explorer $sitefDir
+    $zipUrls = @(
+        @{ url = "http://gsurf.com.br/lib/win/certificado.zip"; nome = "certificado.zip" },
+        @{ url = "http://gsurf.com.br/lib/win/gsclient.zip"; nome = "gsclient.zip" }
+    )
+
+    # Criar pasta C:\SITEF se não existir
+    if (-not (Test-Path $sitefDir)) {
+        $log.Invoke("Criando diretório $sitefDir ...")
+        try {
+            New-Item -ItemType Directory -Path $sitefDir -Force | Out-Null
+            $log.Invoke("Diretório criado com sucesso.")
+        } catch {
+            $log.Invoke("ERRO ao criar diretório: $($_.Exception.Message)")
+            return
+        }
     } else {
-        [System.Windows.Forms.MessageBox]::Show("A pasta C:\SITEF ainda não existe. Execute a instalação primeiro.", "Pasta não encontrada")
+        $log.Invoke("Diretório $sitefDir já existe.")
     }
-})
+
+    $progressSitef.Maximum = $zipUrls.Count * 2
+    $progressSitef.Value = 0
+
+    foreach ($item in $zipUrls) {
+        $url = $item.url
+        $fileName = $item.nome
+        $zipPath = Join-Path $sitefDir $fileName
+        $extractPath = Join-Path $sitefDir ([System.IO.Path]::GetFileNameWithoutExtension($fileName))
+
+        # --- Verifica se o arquivo ZIP já existe ---
+        if (Test-Path $zipPath) {
+            $log.Invoke("Arquivo $fileName já existe. Verificando integridade...")
+            # Tenta extrair
+            try {
+                if (-not (Test-Path $extractPath)) {
+                    New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
+                }
+                Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+                $log.Invoke("Extraído com sucesso (arquivo existente).")
+                $progressSitef.Value += 2
+                continue   # pula download e extração, já feito
+            } catch {
+                $log.Invoke("Falha na extração do arquivo existente. Removendo e baixando novamente...")
+                Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+                Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+                # Continua para baixar novamente
+            }
+        }
+
+        # --- Download ---
+        $log.Invoke("Baixando $fileName ...")
+        try {
+            $webClient = New-Object System.Net.WebClient
+            $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            $webClient.DownloadFile($url, $zipPath)
+            $log.Invoke("Download concluído: $zipPath")
+            $progressSitef.Value += 1
+        } catch {
+            $log.Invoke("ERRO ao baixar $url : $($_.Exception.Message)")
+            $log.Invoke("Verifique se o arquivo existe no servidor e se a URL está correta.")
+            return
+        }
+
+        # --- Validar se é um ZIP legítimo ---
+        $bytes = [System.IO.File]::ReadAllBytes($zipPath)
+        $isZip = $bytes.Count -ge 4 -and $bytes[0] -eq 0x50 -and $bytes[1] -eq 0x4B -and $bytes[2] -eq 0x03 -and $bytes[3] -eq 0x04
+        if (-not $isZip) {
+            $log.Invoke("ERRO: O arquivo baixado não é um ZIP válido (cabeçalho inválido).")
+            $log.Invoke("Possível problema: servidor retornou uma página de erro em vez do arquivo.")
+            # Remove o arquivo corrompido
+            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+            return
+        }
+
+        # --- Extração ---
+        $log.Invoke("Extraindo $fileName para $extractPath ...")
+        try {
+            if (-not (Test-Path $extractPath)) {
+                New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
+            }
+            Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+            $log.Invoke("Extraído com sucesso.")
+            $progressSitef.Value += 1
+        } catch {
+            $log.Invoke("ERRO ao extrair com Expand-Archive: $($_.Exception.Message)")
+            $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
+            try {
+                [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath, $true)
+                $log.Invoke("Extraído com sucesso via fallback.")
+                $progressSitef.Value += 1
+            } catch {
+                $log.Invoke("Falha na extração: $($_.Exception.Message)")
+                $log.Invoke("Removendo arquivo corrompido.")
+                Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+                return
+            }
+        }
+    }
+
+    $log.Invoke("")
+    $log.Invoke("Arquivos baixados e extraídos.")
+
+    # Localizar e executar os instaladores
+    $msiPath = Get-ChildItem -Path $sitefDir -Recurse -Filter "GSurfRSA_Listener_Setup.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $exePath = Get-ChildItem -Path $sitefDir -Recurse -Filter "InstaladorGSurf.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+    if (-not $msiPath) {
+        $log.Invoke("ERRO: Arquivo GSurfRSA_Listener_Setup.msi não encontrado.")
+        $log.Invoke("Verifique se o ZIP foi extraído corretamente e se o nome do arquivo está correto.")
+        return
+    }
+    if (-not $exePath) {
+        $log.Invoke("ERRO: Arquivo InstaladorGSurf.exe não encontrado.")
+        $log.Invoke("Verifique se o ZIP foi extraído corretamente e se o nome do arquivo está correto.")
+        return
+    }
+
+    $log.Invoke("")
+    $log.Invoke("Executando instalador MSI: $($msiPath.FullName)")
+    try {
+        Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$($msiPath.FullName)`"" -Wait
+        $log.Invoke("Instalador MSI concluído.")
+    } catch {
+        $log.Invoke("ERRO ao executar MSI: $($_.Exception.Message)")
+    }
+
+    $log.Invoke("Executando instalador EXE: $($exePath.FullName)")
+    try {
+        Start-Process -FilePath $exePath.FullName -Wait
+        $log.Invoke("Instalador EXE concluído.")
+    } catch {
+        $log.Invoke("ERRO ao executar EXE: $($_.Exception.Message)")
+    }
+
+    $log.Invoke("")
+    $log.Invoke("Aguardando 5 segundos antes de iniciar o serviço...")
+    Start-Sleep -Seconds 5
+
+    # Iniciar serviço GSurfRSA Listener
+    $serviceName = "GSurfRSA Listener"
+    $log.Invoke("Verificando serviço '$serviceName'...")
+    $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($svc) {
+        if ($svc.Status -eq 'Stopped') {
+            try {
+                Start-Service -Name $serviceName -ErrorAction Stop
+                $log.Invoke("Serviço '$serviceName' iniciado com sucesso.")
+            } catch {
+                $log.Invoke("ERRO ao iniciar serviço: $($_.Exception.Message)")
+            }
+        } else {
+            $log.Invoke("Serviço já está em execução (Status: $($svc.Status)).")
+        }
+    } else {
+        $log.Invoke("Serviço '$serviceName' não encontrado. Verifique se a instalação foi concluída corretamente.")
+    }
+
+    $log.Invoke("")
+    $log.Invoke("=== INSTALAÇÃO SITEF CONCLUÍDA ===")
+    $progressSitef.Value = $progressSitef.Maximum
+    [System.Windows.Forms.MessageBox]::Show("Instalação SITEF concluída! Verifique o log para detalhes.", "SITEF")
+}
 
 # ============================================================
 #  CARREGAR LISTA DE INSTALADOS AO ABRIR
