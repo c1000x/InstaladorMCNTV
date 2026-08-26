@@ -640,7 +640,7 @@ function Start-Provisioning {
     $lblStatus.Text = "Provisionamento finalizado."
 }
 
-# Evento do botão Executar
+# ---------- BOTÃO EXECUTAR (UNIFICADO) ----------
 $btnRun.Add_Click({
     $btnRun.Enabled = $false
     $btnSelAll.Enabled = $false
@@ -662,7 +662,11 @@ $btnRun.Add_Click({
     $progressBar.Maximum = $selectedSteps.Count
     $progressBar.Value = 0
 
-    # Cria worker
+    # Exibe o botão Cancelar
+    $btnCancel.Visible = $true
+    $btnCancel.Enabled = $true
+
+    # Cria o worker
     $worker = New-Object System.ComponentModel.BackgroundWorker
     $worker.WorkerReportsProgress = $true
     $worker.WorkerSupportsCancellation = $true
@@ -683,13 +687,17 @@ $btnRun.Add_Click({
     })
 
     $worker.Add_ProgressChanged({
-        # Atualiza a barra de progresso (já atualizada via delegate, mas podemos ignorar)
+        # (opcional) pode atualizar o lblStatus aqui se desejar
     })
 
     $worker.Add_RunWorkerCompleted({
+        # Restaura a interface
         $btnRun.Enabled = $true
         $btnSelAll.Enabled = $true
         $btnSelNone.Enabled = $true
+        $btnCancel.Visible = $false
+        $btnCancel.Enabled = $false
+
         if ($script:CancelRequested) {
             $lblStatus.Text = "Cancelado pelo usuario."
         } else {
@@ -698,6 +706,16 @@ $btnRun.Add_Click({
     })
 
     $worker.RunWorkerAsync()
+})
+
+# ---------- BOTÃO CANCELAR ----------
+$btnCancel.Add_Click({
+    if ($worker -and $worker.IsBusy) {
+        $script:CancelRequested = $true
+        $worker.CancelAsync()
+        $btnCancel.Enabled = $false
+        $lblStatus.Text = "Cancelando..."
+    }
 })
 
 # Botão para cancelar (opcional) - adicionar um botão de cancelar no status
