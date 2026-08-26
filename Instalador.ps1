@@ -381,7 +381,7 @@ foreach ($key in $steps.Keys) {
     $cb = New-Object System.Windows.Forms.CheckBox
     $cb.Text = $key
     $cb.Checked = -not ($UncheckedByDefault -contains $key)
-    $cb.Location = New-Object System.Drawing.Point(15,$y)
+    $cb.Location = [System.Drawing.Point]::new(15, $y)
     $cb.Size = New-Object System.Drawing.Size(330,22)
     $cb.Font = $FontNormal
     $cb.ForeColor = $ColorText
