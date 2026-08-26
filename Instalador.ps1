@@ -575,14 +575,20 @@ $txtLog.BackColor = [System.Drawing.Color]::White
 $txtLog.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
 $grpStatus.Controls.Add($txtLog)
 
-# ============================================================
-#  VARIAVEIS PARA BACKGROUNDWORKER
-# ============================================================
-$worker = $null
-$logDelegate = $null
+# ---------- BOTAO CANCELAR ----------
+$btnCancel = New-Object System.Windows.Forms.Button
+$btnCancel.Text = "Cancelar"
+$btnCancel.Location = New-Object System.Drawing.Point(($formWidth - 120), 57)
+$btnCancel.Size = New-Object System.Drawing.Size(80, 22)
+$btnCancel.Font = $FontButton
+$btnCancel.BackColor = $ColorDanger
+$btnCancel.ForeColor = [System.Drawing.Color]::White
+$btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnCancel.Visible = $false
+$grpStatus.Controls.Add($btnCancel)
 
 # ============================================================
-#  LOGICA DE EXECUCAO COM BACKGROUNDWORKER
+#  LOGICA DE EXECUCAO COM BACKGROUNDWORKER (UNIFICADA)
 # ============================================================
 
 $AppendLog = {
@@ -640,7 +646,7 @@ function Start-Provisioning {
     $lblStatus.Text = "Provisionamento finalizado."
 }
 
-# ---------- BOTÃO EXECUTAR (UNIFICADO) ----------
+# Evento do botão Executar (UNIFICADO)
 $btnRun.Add_Click({
     $btnRun.Enabled = $false
     $btnSelAll.Enabled = $false
@@ -708,7 +714,7 @@ $btnRun.Add_Click({
     $worker.RunWorkerAsync()
 })
 
-# ---------- BOTÃO CANCELAR ----------
+# Evento do botão Cancelar
 $btnCancel.Add_Click({
     if ($worker -and $worker.IsBusy) {
         $script:CancelRequested = $true
@@ -716,42 +722,6 @@ $btnCancel.Add_Click({
         $btnCancel.Enabled = $false
         $lblStatus.Text = "Cancelando..."
     }
-})
-
-# Botão para cancelar (opcional) - adicionar um botão de cancelar no status
-$btnCancel = New-Object System.Windows.Forms.Button
-$btnCancel.Text = "Cancelar"
-$btnCancel.Location = New-Object System.Drawing.Point(($formWidth - 120), 57)
-$btnCancel.Size = New-Object System.Drawing.Size(80, 22)
-$btnCancel.Font = $FontButton
-$btnCancel.BackColor = $ColorDanger
-$btnCancel.ForeColor = [System.Drawing.Color]::White
-$btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$btnCancel.Visible = $false
-$grpStatus.Controls.Add($btnCancel)
-
-# Modificar o worker para mostrar o botão cancelar
-$btnRun.Add_Click({
-    # ... (código existente)
-    $btnCancel.Visible = $true
-    $btnCancel.Enabled = $true
-    $worker.RunWorkerAsync()
-})
-
-$btnCancel.Add_Click({
-    if ($worker -and $worker.IsBusy) {
-        $script:CancelRequested = $true
-        $worker.CancelAsync()
-        $btnCancel.Enabled = $false
-        $lblStatus.Text = "Cancelando..."
-    }
-})
-
-# Ajustar o evento RunWorkerCompleted para esconder o botão cancelar
-$worker.Add_RunWorkerCompleted({
-    $btnCancel.Visible = $false
-    $btnCancel.Enabled = $false
-    # ... resto do código
 })
 
 # ============================================================
