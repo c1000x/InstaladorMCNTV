@@ -4,13 +4,10 @@
     Pode ser executado localmente ou via: irm <RAW_URL> | iex.
 
     Coluna esquerda: etapas gerais de provisionamento (roda tudo junto em "Executar").
-    Coluna direita:  instalar programas individuais (apps.json) ou remover programas
+    Coluna direita:  instalar programas individuais (lista hardcoded) ou remover programas
                       ja instalados na maquina, um a um.
 
-    Arquivos usados na mesma pasta:
-      - apps.json           -> lista de apps instalados via choco/winget (editavel, criado automaticamente se nao existir)
-      - logs\provisionamento_<data>.log  -> log completo de cada execucao
-      - logs\relatorio_<data>.txt        -> resumo final (sucesso/falha por etapa)
+    Logs salvos em: logs\provisionamento_<data>.log  e relatorio_<data>.txt
 #>
 
 # ============================================================
@@ -44,11 +41,33 @@ Add-Type -AssemblyName System.Drawing
 # ============================================================
 #  BOTAO PERSONALIZADO (script externo do GitHub)
 #  Edite as duas linhas abaixo: link raw do script e o texto do botao.
-#  Dica: use a URL "raw.githubusercontent.com", nao a pagina normal do GitHub.
 # ============================================================
 $CustomScriptUrl   = "https://get.activated.win"
 $CustomScriptLabel = "Ativar Windows"
 
+# ============================================================
+#  LISTAS DE APLICATIVOS (hardcoded, sem JSON)
+#  Edite aqui para adicionar/remover programas.
+# ============================================================
+$ChocoApps = @(
+    "googlechrome"
+)
+
+$WingetApps = @(
+    "AnyDesk.AnyDesk",
+    "Adobe.Acrobat.Reader.64-bit",
+    "Oracle.JavaRuntimeEnvironment",
+    "Mozilla.Firefox.pt-BR",
+    "7zip.7zip"
+)
+
+$WingetStoreApps = @(
+    "9WZDNCRFJBMP"   # Microsoft Store app exemplo
+)
+
+# ============================================================
+#  DIRETORIOS DE LOG
+# ============================================================
 $ScriptDir = Split-Path -Parent $scriptPath
 $LogsDir   = Join-Path $ScriptDir "logs"
 if (-not (Test-Path $LogsDir)) { New-Item -Path $LogsDir -ItemType Directory -Force | Out-Null }
@@ -57,36 +76,11 @@ $Timestamp   = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $LogFilePath = Join-Path $LogsDir "provisionamento_$Timestamp.log"
 $ReportPath  = Join-Path $LogsDir "relatorio_$Timestamp.txt"
 
-# resultado de cada etapa para o relatorio final: chave = nome, valor = "OK" / "FALHA" / "SIMULADO" / "PULADO"
 $script:Results = [ordered]@{}
+$script:CancelRequested = $false
 
 # ============================================================
-#  APPS.JSON (lista de apps editavel sem tocar no script)
-# ============================================================
-$AppsJsonPath = Join-Path $ScriptDir "apps.json"
-$DefaultApps = @{
-    choco = @("googlechrome")
-    winget = @(
-        "AnyDesk.AnyDesk",
-        "Adobe.Acrobat.Reader.64-bit",
-        "Oracle.JavaRuntimeEnvironment",
-        "Mozilla.Firefox.pt-BR",
-        "7zip.7zip"
-    )
-    wingetStore = @("9WZDNCRFJBMP")
-}
-if (-not (Test-Path $AppsJsonPath)) {
-    $DefaultApps | ConvertTo-Json -Depth 5 | Set-Content -Path $AppsJsonPath -Encoding UTF8
-}
-try {
-    $AppsConfig = Get-Content -Path $AppsJsonPath -Raw | ConvertFrom-Json
-} catch {
-    $AppsConfig = [PSCustomObject]$DefaultApps
-}
-
-# ============================================================
-#  FUNCOES DE CADA ETAPA (cada uma escreve no log via callback)
-#  $DryRun = $true -> so mostra o que faria, nao executa nada
+#  FUNCOES DE CADA ETAPA
 # ============================================================
 
 function Step-RestorePoint {
@@ -197,14 +191,12 @@ function Ensure-ChocoAvailable {
     param($Log)
     if (Get-Command choco -ErrorAction SilentlyContinue) { return $true }
 
-    # PATH do processo atual pode estar desatualizado (choco instalado em outra sessao) - recarrega do registro
     $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
     $userPath    = [System.Environment]::GetEnvironmentVariable("Path", "User")
     $env:Path = "$machinePath;$userPath"
 
     if (Get-Command choco -ErrorAction SilentlyContinue) { return $true }
 
-    # fallback: caminho padrao de instalacao do Chocolatey
     $chocoBin = Join-Path $env:ProgramData "chocolatey\bin"
     if (Test-Path (Join-Path $chocoBin "choco.exe")) {
         $env:Path += ";$chocoBin"
@@ -260,22 +252,22 @@ function Step-TarefaLimpeza {
 }
 
 # ============================================================
-#  CATALOGO DE PROGRAMAS (coluna da direita - instalar individualmente)
+#  CATALOGO DE PROGRAMAS (construido a partir das listas hardcoded)
 # ============================================================
 function Build-AppCatalogLabels {
     $script:AppCatalogMap = @{}
     $labels = New-Object System.Collections.ArrayList
-    foreach ($id in @($AppsConfig.choco)) {
+    foreach ($id in $ChocoApps) {
         $label = "[Choco] $id"
         $script:AppCatalogMap[$label] = @{ Manager = "choco"; Id = $id }
         [void]$labels.Add($label)
     }
-    foreach ($id in @($AppsConfig.winget)) {
+    foreach ($id in $WingetApps) {
         $label = "[Winget] $id"
         $script:AppCatalogMap[$label] = @{ Manager = "winget"; Id = $id }
         [void]$labels.Add($label)
     }
-    foreach ($id in @($AppsConfig.wingetStore)) {
+    foreach ($id in $WingetStoreApps) {
         $label = "[Store] $id"
         $script:AppCatalogMap[$label] = @{ Manager = "wingetStore"; Id = $id }
         [void]$labels.Add($label)
@@ -419,21 +411,10 @@ $btnSelNone.BackColor = $ColorSurface
 $btnSelNone.Add_Click({ $checkboxes.Values | ForEach-Object { $_.Checked = $false } })
 $grpSystem.Controls.Add($btnSelNone)
 
-$btnEditApps = New-Object System.Windows.Forms.Button
-$btnEditApps.Text = "Editar apps.json"
-$btnEditApps.Location = New-Object System.Drawing.Point(15,375)
-$btnEditApps.Size = New-Object System.Drawing.Size(160,30)
-$btnEditApps.Font = $FontButton
-$btnEditApps.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$btnEditApps.FlatAppearance.BorderColor = $ColorBorder
-$btnEditApps.BackColor = $ColorSurface
-$btnEditApps.Add_Click({ Start-Process notepad.exe $AppsJsonPath })
-$grpSystem.Controls.Add($btnEditApps)
-
 $btnRun = New-Object System.Windows.Forms.Button
 $btnRun.Text = "Executar configuracao"
-$btnRun.Location = New-Object System.Drawing.Point(190,375)
-$btnRun.Size = New-Object System.Drawing.Size(160,30)
+$btnRun.Location = New-Object System.Drawing.Point(15,375)
+$btnRun.Size = New-Object System.Drawing.Size(335,30)
 $btnRun.Font = $FontButton
 $btnRun.BackColor = $ColorPrimary
 $btnRun.ForeColor = [System.Drawing.Color]::White
@@ -451,24 +432,51 @@ $grpInstall.Size = New-Object System.Drawing.Size($colW,$groupH)
 $form.Controls.Add($grpInstall)
 
 $lblInstallInfo = New-Object System.Windows.Forms.Label
-$lblInstallInfo.Text = "Selecione os aplicativos que deseja instalar:"
+$lblInstallInfo.Text = "Buscar:"
 $lblInstallInfo.Font = $FontNormal
 $lblInstallInfo.ForeColor = $ColorMuted
 $lblInstallInfo.Location = New-Object System.Drawing.Point(15,32)
-$lblInstallInfo.Size = New-Object System.Drawing.Size(330,22)
+$lblInstallInfo.Size = New-Object System.Drawing.Size(50,22)
 $grpInstall.Controls.Add($lblInstallInfo)
+
+$txtSearchInstall = New-Object System.Windows.Forms.TextBox
+$txtSearchInstall.Location = New-Object System.Drawing.Point(65,32)
+$txtSearchInstall.Size = New-Object System.Drawing.Size(280,22)
+$txtSearchInstall.Font = $FontNormal
+$grpInstall.Controls.Add($txtSearchInstall)
 
 $clbInstall = New-Object System.Windows.Forms.CheckedListBox
 $clbInstall.Location = New-Object System.Drawing.Point(15,58)
-$clbInstall.Size = New-Object System.Drawing.Size(330,300)
+$clbInstall.Size = New-Object System.Drawing.Size(330,290)
 $clbInstall.CheckOnClick = $true
 $clbInstall.Font = $FontNormal
-foreach ($label in (Build-AppCatalogLabels)) { [void]$clbInstall.Items.Add($label,$true) }
+# Preencher com todos os labels
+$allLabels = Build-AppCatalogLabels
+$clbInstall.Tag = $allLabels   # guarda a lista completa
+foreach ($label in $allLabels) { [void]$clbInstall.Items.Add($label,$true) }
 $grpInstall.Controls.Add($clbInstall)
 
+# Evento de filtro
+$txtSearchInstall.Add_TextChanged({
+    $search = $txtSearchInstall.Text.Trim().ToLower()
+    $clbInstall.BeginUpdate()
+    $clbInstall.Items.Clear()
+    $all = $clbInstall.Tag
+    if ([string]::IsNullOrEmpty($search)) {
+        foreach ($item in $all) { [void]$clbInstall.Items.Add($item,$true) }
+    } else {
+        foreach ($item in $all) {
+            if ($item.ToLower().Contains($search)) {
+                [void]$clbInstall.Items.Add($item,$true)
+            }
+        }
+    }
+    $clbInstall.EndUpdate()
+})
+
 $btnInstallSelected = New-Object System.Windows.Forms.Button
-$btnInstallSelected.Text = "INSTALAR SELECIONADOS"
-$btnInstallSelected.Location = New-Object System.Drawing.Point(15,370)
+$btnInstallSelected.Text = "INSTALAR SELECIONADOS (Paralelo)"
+$btnInstallSelected.Location = New-Object System.Drawing.Point(15,358)
 $btnInstallSelected.Size = New-Object System.Drawing.Size(330,40)
 $btnInstallSelected.Font = New-Object System.Drawing.Font("Segoe UI Semibold",10)
 $btnInstallSelected.BackColor = $ColorSuccess
@@ -522,7 +530,7 @@ $btnUninstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnUninstallSelected.FlatAppearance.BorderSize = 0
 $grpUninstall.Controls.Add($btnUninstallSelected)
 
-# ---------- ACAO PERSONALIZADA ----------
+# ---------- ACAO PERSONALIZADA (segura) ----------
 $btnCustom = New-Object System.Windows.Forms.Button
 $btnCustom.Text = $CustomScriptLabel
 $btnCustom.Location = New-Object System.Drawing.Point(15,380)
@@ -567,10 +575,14 @@ $txtLog.BackColor = [System.Drawing.Color]::White
 $txtLog.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
 $grpStatus.Controls.Add($txtLog)
 
-# Mantem a lista de instalados atualizada quando a janela abrir.
+# ============================================================
+#  VARIAVEIS PARA BACKGROUNDWORKER
+# ============================================================
+$worker = $null
+$logDelegate = $null
 
 # ============================================================
-#  LOGICA
+#  LOGICA DE EXECUCAO COM BACKGROUNDWORKER
 # ============================================================
 
 $AppendLog = {
@@ -583,6 +595,239 @@ $AppendLog = {
     [System.Windows.Forms.Application]::DoEvents()
 }
 
+# Função que será executada no BackgroundWorker
+function Start-Provisioning {
+    param($selectedSteps, $dryRun, $logDelegate, $progressDelegate, $reportDelegate)
+
+    $script:Results.Clear()
+    $logDelegate.Invoke("Iniciando provisionamento - Modo: $(if ($dryRun) {'SIMULACAO'} else {'EXECUCAO REAL'})")
+    $logDelegate.Invoke("Log completo salvo em: $LogFilePath")
+    $logDelegate.Invoke("")
+
+    $total = $selectedSteps.Count
+    $current = 0
+    foreach ($key in $selectedSteps) {
+        if ($script:CancelRequested) {
+            $logDelegate.Invoke("Cancelamento solicitado pelo usuario.")
+            break
+        }
+        $current++
+        $progressDelegate.Invoke($current, $total)
+        $lblStatus.Text = "Executando: $key ..."
+        try {
+            & $steps[$key] $logDelegate $dryRun
+            $script:Results[$key] = if ($dryRun) { "SIMULADO" } else { "OK" }
+        } catch {
+            $logDelegate.Invoke("ERRO em '$key': $($_.Exception.Message)")
+            $script:Results[$key] = "FALHA: $($_.Exception.Message)"
+        }
+    }
+
+    $logDelegate.Invoke("")
+    $logDelegate.Invoke("=== Concluido ===")
+
+    # relatorio final
+    $reportLines = @()
+    $reportLines += "Relatorio de Provisionamento - $Timestamp"
+    $reportLines += "Modo: $(if ($dryRun) {'SIMULACAO'} else {'EXECUCAO REAL'})"
+    $reportLines += ""
+    foreach ($k in $script:Results.Keys) {
+        $reportLines += ("{0,-45} {1}" -f $k, $script:Results[$k])
+    }
+    $reportLines | Set-Content -Path $ReportPath -Encoding UTF8
+    $logDelegate.Invoke("Relatorio salvo em: $ReportPath")
+    $reportDelegate.Invoke($ReportPath)
+    $lblStatus.Text = "Provisionamento finalizado."
+}
+
+# Evento do botão Executar
+$btnRun.Add_Click({
+    $btnRun.Enabled = $false
+    $btnSelAll.Enabled = $false
+    $btnSelNone.Enabled = $false
+    $txtLog.Clear()
+    $script:CancelRequested = $false
+
+    $DryRun = $chkDryRun.Checked
+    $selectedSteps = $steps.Keys | Where-Object { $checkboxes[$_].Checked }
+
+    if ($selectedSteps.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("Nenhuma etapa selecionada.", "Aviso") | Out-Null
+        $btnRun.Enabled = $true
+        $btnSelAll.Enabled = $true
+        $btnSelNone.Enabled = $true
+        return
+    }
+
+    $progressBar.Maximum = $selectedSteps.Count
+    $progressBar.Value = 0
+
+    # Cria worker
+    $worker = New-Object System.ComponentModel.BackgroundWorker
+    $worker.WorkerReportsProgress = $true
+    $worker.WorkerSupportsCancellation = $true
+
+    $worker.Add_DoWork({
+        param($sender, $e)
+        $logDel = $AppendLog
+        $progressDel = {
+            param($current, $total)
+            $progressBar.Value = $current
+            $sender.ReportProgress(($current / $total * 100))
+        }
+        $reportDel = {
+            param($path)
+            [System.Windows.Forms.MessageBox]::Show("Provisionamento concluido. Relatorio em:`n$path", "Finalizado") | Out-Null
+        }
+        Start-Provisioning -selectedSteps $selectedSteps -dryRun $DryRun -logDelegate $logDel -progressDelegate $progressDel -reportDelegate $reportDel
+    })
+
+    $worker.Add_ProgressChanged({
+        # Atualiza a barra de progresso (já atualizada via delegate, mas podemos ignorar)
+    })
+
+    $worker.Add_RunWorkerCompleted({
+        $btnRun.Enabled = $true
+        $btnSelAll.Enabled = $true
+        $btnSelNone.Enabled = $true
+        if ($script:CancelRequested) {
+            $lblStatus.Text = "Cancelado pelo usuario."
+        } else {
+            $lblStatus.Text = "Pronto."
+        }
+    })
+
+    $worker.RunWorkerAsync()
+})
+
+# Botão para cancelar (opcional) - adicionar um botão de cancelar no status
+$btnCancel = New-Object System.Windows.Forms.Button
+$btnCancel.Text = "Cancelar"
+$btnCancel.Location = New-Object System.Drawing.Point(($formWidth - 120), 57)
+$btnCancel.Size = New-Object System.Drawing.Size(80, 22)
+$btnCancel.Font = $FontButton
+$btnCancel.BackColor = $ColorDanger
+$btnCancel.ForeColor = [System.Drawing.Color]::White
+$btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnCancel.Visible = $false
+$grpStatus.Controls.Add($btnCancel)
+
+# Modificar o worker para mostrar o botão cancelar
+$btnRun.Add_Click({
+    # ... (código existente)
+    $btnCancel.Visible = $true
+    $btnCancel.Enabled = $true
+    $worker.RunWorkerAsync()
+})
+
+$btnCancel.Add_Click({
+    if ($worker -and $worker.IsBusy) {
+        $script:CancelRequested = $true
+        $worker.CancelAsync()
+        $btnCancel.Enabled = $false
+        $lblStatus.Text = "Cancelando..."
+    }
+})
+
+# Ajustar o evento RunWorkerCompleted para esconder o botão cancelar
+$worker.Add_RunWorkerCompleted({
+    $btnCancel.Visible = $false
+    $btnCancel.Enabled = $false
+    # ... resto do código
+})
+
+# ============================================================
+#  INSTALACAO PARALELA DE APLICATIVOS
+# ============================================================
+$btnInstallSelected.Add_Click({
+    $selectedLabels = @($clbInstall.CheckedItems)
+    if ($selectedLabels.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("Selecione ao menos um programa na lista.", "Aviso") | Out-Null
+        return
+    }
+
+    $btnInstallSelected.Enabled = $false
+    $AppendLog.Invoke("== Instalando programas selecionados (em paralelo) ==")
+    $AppendLog.Invoke("Total: $($selectedLabels.Count) aplicativos")
+
+    $precisaChoco = $selectedLabels | Where-Object { $script:AppCatalogMap[$_].Manager -eq "choco" }
+    $chocoOk = if ($precisaChoco) { Ensure-ChocoAvailable -Log $AppendLog } else { $true }
+
+    if ($precisaChoco -and -not $chocoOk) {
+        $AppendLog.Invoke("Chocolatey nao disponivel. Instale-o primeiro.")
+        $btnInstallSelected.Enabled = $true
+        return
+    }
+
+    $jobs = @()
+    $totalJobs = $selectedLabels.Count
+    $completed = 0
+
+    # Função para instalar um app em um job
+    foreach ($label in $selectedLabels) {
+        $info = $script:AppCatalogMap[$label]
+        if (-not $info) { continue }
+
+        $jobScript = {
+            param($manager, $id, $logDelegate)
+            try {
+                $output = @()
+                switch ($manager) {
+                    "choco" {
+                        $output += "Instalando (choco): $id"
+                        $result = choco install $id -y --force --ignore-checksums 2>&1
+                        $output += $result
+                    }
+                    "winget" {
+                        $output += "Instalando (winget): $id"
+                        $result = winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent 2>&1
+                        $output += $result
+                    }
+                    "wingetStore" {
+                        $output += "Instalando (msstore): $id"
+                        $result = winget install --id $id --source msstore --accept-source-agreements --accept-package-agreements --silent 2>&1
+                        $output += $result
+                    }
+                }
+                return $output
+            } catch {
+                return "ERRO ao instalar $id : $($_.Exception.Message)"
+            }
+        }
+
+        $job = Start-Job -ScriptBlock $jobScript -ArgumentList $info.Manager, $info.Id, $AppendLog
+        $jobs += $job
+    }
+
+    # Aguardar todos os jobs completarem e coletar saídas
+    while ($jobs | Where-Object { $_.State -eq 'Running' }) {
+        Start-Sleep -Milliseconds 500
+        # Atualizar progresso
+        $running = ($jobs | Where-Object { $_.State -eq 'Running' }).Count
+        $completed = $totalJobs - $running
+        $lblStatus.Text = "Instalando... $completed de $totalJobs concluidos"
+        $progressBar.Value = [int](($completed / $totalJobs) * 100)
+        [System.Windows.Forms.Application]::DoEvents()
+    }
+
+    # Coletar resultados
+    foreach ($job in $jobs) {
+        $output = Receive-Job -Job $job -ErrorAction SilentlyContinue
+        if ($output) {
+            foreach ($line in $output) { $AppendLog.Invoke($line) }
+        }
+        Remove-Job -Job $job -Force
+    }
+
+    $AppendLog.Invoke("Instalacao paralela concluida.")
+    $lblStatus.Text = "Instalacao concluida."
+    $progressBar.Value = 0
+    $btnInstallSelected.Enabled = $true
+})
+
+# ============================================================
+#  BOTAO CUSTOMIZADO (seguro)
+# ============================================================
 $btnCustom.Add_Click({
     if ([string]::IsNullOrWhiteSpace($CustomScriptUrl) -or $CustomScriptUrl -like "*usuario/repositorio*") {
         [System.Windows.Forms.MessageBox]::Show("Edite as variaveis `$CustomScriptUrl e `$CustomScriptLabel no topo do ProvisioningTool.ps1 antes de usar este botao.", "Configure o link") | Out-Null
@@ -600,113 +845,32 @@ $btnCustom.Add_Click({
     $btnCustom.Enabled = $false
     $AppendLog.Invoke("== Executando script externo: $CustomScriptLabel ==")
     $AppendLog.Invoke("URL: $CustomScriptUrl")
+
     try {
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        $scriptContent = (New-Object System.Net.WebClient).DownloadString($CustomScriptUrl)
-        Invoke-Expression $scriptContent 2>&1 | ForEach-Object { $AppendLog.Invoke($_) }
+        # Baixa para um arquivo temporário
+        $tempScript = Join-Path $env:TEMP "MCNTV_custom_$(Get-Random).ps1"
+        (New-Object System.Net.WebClient).DownloadFile($CustomScriptUrl, $tempScript)
+
+        # Opcional: verificar hash (descomente e substitua pelo hash esperado)
+        # $hash = (Get-FileHash $tempScript -Algorithm SHA256).Hash
+        # $expectedHash = "SEU_HASH_AQUI"
+        # if ($hash -ne $expectedHash) { throw "Hash do script nao confere. Execucao cancelada." }
+
+        $AppendLog.Invoke("Script baixado para $tempScript")
+        # Executa com & (mais seguro que iex)
+        & $tempScript 2>&1 | ForEach-Object { $AppendLog.Invoke($_) }
         $AppendLog.Invoke("Script '$CustomScriptLabel' concluido.")
+        Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
     } catch {
         $AppendLog.Invoke("ERRO ao executar '$CustomScriptLabel': $($_.Exception.Message)")
     }
     $btnCustom.Enabled = $true
 })
 
-$btnRun.Add_Click({
-    $btnRun.Enabled = $false
-    $btnSelAll.Enabled = $false
-    $btnSelNone.Enabled = $false
-    $btnEditApps.Enabled = $false
-    $txtLog.Clear()
-    $script:Results.Clear()
-
-    $DryRun = $chkDryRun.Checked
-    $selected = $steps.Keys | Where-Object { $checkboxes[$_].Checked }
-    $progressBar.Maximum = [Math]::Max(1, $selected.Count)
-    $progressBar.Value = 0
-
-    $modo = if ($DryRun) { "SIMULACAO (nada sera alterado)" } else { "EXECUCAO REAL" }
-    $AppendLog.Invoke("Iniciando provisionamento - Modo: $modo")
-    $AppendLog.Invoke("Log completo salvo em: $LogFilePath")
-    $AppendLog.Invoke("")
-
-    foreach ($key in $steps.Keys) {
-        if ($checkboxes[$key].Checked) {
-            try {
-                & $steps[$key] $AppendLog $DryRun
-                $script:Results[$key] = if ($DryRun) { "SIMULADO" } else { "OK" }
-            } catch {
-                $AppendLog.Invoke("ERRO em '$key': $($_.Exception.Message)")
-                $script:Results[$key] = "FALHA: $($_.Exception.Message)"
-            }
-            $progressBar.Value = [Math]::Min($progressBar.Maximum, $progressBar.Value + 1)
-        } else {
-            $script:Results[$key] = "PULADO"
-        }
-    }
-
-    $AppendLog.Invoke("")
-    $AppendLog.Invoke("=== Concluido ===")
-
-    # relatorio final
-    $reportLines = @()
-    $reportLines += "Relatorio de Provisionamento - $Timestamp"
-    $reportLines += "Modo: $modo"
-    $reportLines += ""
-    foreach ($k in $script:Results.Keys) {
-        $reportLines += ("{0,-45} {1}" -f $k, $script:Results[$k])
-    }
-    $reportLines | Set-Content -Path $ReportPath -Encoding UTF8
-    $AppendLog.Invoke("Relatorio salvo em: $ReportPath")
-
-    $btnRun.Enabled = $true
-    $btnSelAll.Enabled = $true
-    $btnSelNone.Enabled = $true
-    $btnEditApps.Enabled = $true
-    [System.Windows.Forms.MessageBox]::Show("Provisionamento concluido ($modo). Relatorio em:`n$ReportPath", "Finalizado") | Out-Null
-})
-
-# ---------- Instalar programas selecionados (coluna direita) ----------
-$btnInstallSelected.Add_Click({
-    $selectedLabels = @($clbInstall.CheckedItems)
-    if ($selectedLabels.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show("Selecione ao menos um programa na lista.", "Aviso") | Out-Null
-        return
-    }
-    $btnInstallSelected.Enabled = $false
-    $AppendLog.Invoke("== Instalando programas selecionados ==")
-    $precisaChoco = $selectedLabels | Where-Object { $script:AppCatalogMap[$_].Manager -eq "choco" }
-    $chocoOk = if ($precisaChoco) { Ensure-ChocoAvailable -Log $AppendLog } else { $true }
-    foreach ($label in $selectedLabels) {
-        $info = $script:AppCatalogMap[$label]
-        if (-not $info) { continue }
-        if ($info.Manager -eq "choco" -and -not $chocoOk) {
-            $AppendLog.Invoke("Pulando '$($info.Id)': Chocolatey indisponivel.")
-            continue
-        }
-        try {
-            switch ($info.Manager) {
-                "choco" {
-                    $AppendLog.Invoke("Instalando (choco): $($info.Id)")
-                    choco install $($info.Id) -y --force --ignore-checksums 2>&1 | ForEach-Object { $AppendLog.Invoke($_) }
-                }
-                "winget" {
-                    $AppendLog.Invoke("Instalando (winget): $($info.Id)")
-                    winget install -e --id $($info.Id) --accept-source-agreements --accept-package-agreements --silent 2>&1 | ForEach-Object { $AppendLog.Invoke($_) }
-                }
-                "wingetStore" {
-                    $AppendLog.Invoke("Instalando (msstore): $($info.Id)")
-                    winget install --id $($info.Id) --source msstore --accept-source-agreements --accept-package-agreements --silent 2>&1 | ForEach-Object { $AppendLog.Invoke($_) }
-                }
-            }
-        } catch {
-            $AppendLog.Invoke("ERRO ao instalar '$($info.Id)': $($_.Exception.Message)")
-        }
-    }
-    $AppendLog.Invoke("Instalacao dos selecionados concluida.")
-    $btnInstallSelected.Enabled = $true
-})
-
-# ---------- Listar / remover programas instalados (coluna direita) ----------
+# ============================================================
+#  LISTA DE INSTALADOS
+# ============================================================
 $script:UninstallMap = @{}
 
 $btnRefreshInstalled.Add_Click({
@@ -757,9 +921,13 @@ $btnUninstallSelected.Add_Click({
             $AppendLog.Invoke("ERRO ao desinstalar '$name': $($_.Exception.Message)")
         }
     }
-    $AppendLog.Invoke("Remocao concluida. Alguns instaladores mostram sua propria janela/confirmacao.")
-    $AppendLog.Invoke("Clique em 'Atualizar Lista de Instalados' para ver a lista atualizada.")
+    $AppendLog.Invoke("Remocao concluida. Clique em 'Atualizar lista' para ver a lista atualizada.")
     $btnUninstallSelected.Enabled = $true
+})
+
+# Carregar lista de instalados ao abrir o formulário
+$form.Add_Shown({
+    $btnRefreshInstalled.PerformClick()
 })
 
 [void]$form.ShowDialog()
