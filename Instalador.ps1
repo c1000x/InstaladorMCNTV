@@ -302,14 +302,14 @@ $FontHeader = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
 $FontTitle  = New-Object System.Drawing.Font("Segoe UI Semibold", 18)
 $FontButton = New-Object System.Drawing.Font("Segoe UI", 9)
 
-$formWidth  = 1180
+$formWidth  = 1300
 $formHeight = 760
 $margin     = 20
 $gap        = 15
 $colW       = 365
 $topY       = 78
 $groupH     = 400
-$col1X      = 10
+$col1X      = $margin
 $col2X      = $col1X + $colW + $gap
 $col3X      = $col2X + $colW + $gap
 
