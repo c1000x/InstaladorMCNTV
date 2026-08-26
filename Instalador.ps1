@@ -624,16 +624,6 @@ $txtSitefLog.Font = New-Object System.Drawing.Font("Consolas",8)
 $txtSitefLog.BackColor = [System.Drawing.Color]::White
 $tabSitef.Controls.Add($txtSitefLog)
 
-# Variável para o log do SITEF
-$script:SitefLogDelegate = {
-    param($msg)
-    $line = "$msg"
-    $txtSitefLog.AppendText("$line`r`n")
-    $txtSitefLog.SelectionStart = $txtSitefLog.Text.Length
-    $txtSitefLog.ScrollToCaret()
-    [System.Windows.Forms.Application]::DoEvents()
-}
-
 # ============================================================
 #  STATUS (compartilhado)
 # ============================================================
@@ -669,18 +659,6 @@ $txtLog.Font = New-Object System.Drawing.Font("Consolas",8)
 $txtLog.BackColor = [System.Drawing.Color]::White
 $txtLog.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
 $grpStatus.Controls.Add($txtLog)
-
-$btnCancel = New-Object System.Windows.Forms.Button
-$btnCancel.Text = "Cancelar"
-$btnCancel.Location = New-Object System.Drawing.Point(($formWidth - 120), 57)
-$btnCancel.Size = New-Object System.Drawing.Size(80, 22)
-$btnCancel.Font = $FontButton
-$btnCancel.BackColor = $ColorDanger
-$btnCancel.ForeColor = [System.Drawing.Color]::White
-$btnCancel.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$btnCancel.Visible = $false
-$btnCancel.Enabled = $false
-$grpStatus.Controls.Add($btnCancel)
 
 # ============================================================
 #  FUNCAO DE LOG GERAL
@@ -937,154 +915,7 @@ $btnUninstallSelected.Add_Click({
 })
 
 # ============================================================
-#  FUNÇÃO PARA INSTALAÇÃO DO SITEF
-# ============================================================
-function Install-Sitef {
-    $log = $script:SitefLogDelegate
-    $log.Invoke("=== INICIANDO INSTALAÇÃO SITEF ===")
-    $log.Invoke("")
-
-    $sitefDir = "C:\SITEF"
-    $zipUrls = @(
-        @{ url = "http://gsurf.com.br/lib/win/certificado.zip"; nome = "certificado.zip" },
-        @{ url = "http://gsurf.com.br/lib/win/gsclient.zip"; nome = "gsclient.zip" }
-    )
-
-    # Criar pasta C:\SITEF
-    if (-not (Test-Path $sitefDir)) {
-        $log.Invoke("Criando diretório $sitefDir ...")
-        try {
-            New-Item -ItemType Directory -Path $sitefDir -Force | Out-Null
-            $log.Invoke("Diretório criado com sucesso.")
-        } catch {
-            $log.Invoke("ERRO ao criar diretório: $($_.Exception.Message)")
-            return
-        }
-    } else {
-        $log.Invoke("Diretório $sitefDir já existe.")
-    }
-
-    $progressSitef.Maximum = $zipUrls.Count * 2
-    $progressSitef.Value = 0
-
-    foreach ($item in $zipUrls) {
-        $url = $item.url
-        $fileName = $item.nome
-        $zipPath = Join-Path $sitefDir $fileName
-        $extractPath = Join-Path $sitefDir ([System.IO.Path]::GetFileNameWithoutExtension($fileName))
-
-        # Baixar
-        $log.Invoke("Baixando $fileName ...")
-        try {
-            $webClient = New-Object System.Net.WebClient
-            $webClient.DownloadFile($url, $zipPath)
-            $log.Invoke("Download concluído: $zipPath")
-            $progressSitef.Value += 1
-        } catch {
-            $log.Invoke("ERRO ao baixar $url : $($_.Exception.Message)")
-            $log.Invoke("Verifique se o arquivo existe no servidor e se a URL está correta.")
-            return
-        }
-
-        # Verificar se o arquivo baixado é um ZIP válido (cabeçalho PK)
-        $bytes = [System.IO.File]::ReadAllBytes($zipPath)
-        if ($bytes.Count -lt 4 -or $bytes[0] -ne 0x50 -or $bytes[1] -ne 0x4B -or $bytes[2] -ne 0x03 -or $bytes[3] -ne 0x04) {
-            $log.Invoke("ERRO: O arquivo baixado não é um ZIP válido (cabeçalho inválido).")
-            $log.Invoke("O servidor pode ter retornado uma página de erro. Verifique a URL.")
-            # Remove o arquivo corrompido
-            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-            return
-        }
-
-        # Extrair
-        $log.Invoke("Extraindo $fileName para $extractPath ...")
-        try {
-            if (-not (Test-Path $extractPath)) {
-                New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
-            }
-            Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-            $log.Invoke("Extraído com sucesso.")
-            $progressSitef.Value += 1
-        } catch {
-            $log.Invoke("ERRO ao extrair com Expand-Archive: $($_.Exception.Message)")
-            $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
-            try {
-                [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath, $true)
-                $log.Invoke("Extraído com sucesso via fallback.")
-                $progressSitef.Value += 1
-            } catch {
-                $log.Invoke("Falha na extração: $($_.Exception.Message)")
-                return
-            }
-        }
-    }
-
-    $log.Invoke("")
-    $log.Invoke("Arquivos baixados e extraídos.")
-
-    # Localizar e executar os instaladores
-    $msiPath = Get-ChildItem -Path $sitefDir -Recurse -Filter "GSurfRSA_Listener_Setup.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
-    $exePath = Get-ChildItem -Path $sitefDir -Recurse -Filter "InstaladorGSurf.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-
-    if (-not $msiPath) {
-        $log.Invoke("ERRO: Arquivo GSurfRSA_Listener_Setup.msi não encontrado.")
-        $log.Invoke("Verifique se o ZIP foi extraído corretamente e se o nome do arquivo está correto.")
-        return
-    }
-    if (-not $exePath) {
-        $log.Invoke("ERRO: Arquivo InstaladorGSurf.exe não encontrado.")
-        $log.Invoke("Verifique se o ZIP foi extraído corretamente e se o nome do arquivo está correto.")
-        return
-    }
-
-    $log.Invoke("")
-    $log.Invoke("Executando instalador MSI: $($msiPath.FullName)")
-    try {
-        Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$($msiPath.FullName)`"" -Wait
-        $log.Invoke("Instalador MSI concluído.")
-    } catch {
-        $log.Invoke("ERRO ao executar MSI: $($_.Exception.Message)")
-    }
-
-    $log.Invoke("Executando instalador EXE: $($exePath.FullName)")
-    try {
-        Start-Process -FilePath $exePath.FullName -Wait
-        $log.Invoke("Instalador EXE concluído.")
-    } catch {
-        $log.Invoke("ERRO ao executar EXE: $($_.Exception.Message)")
-    }
-
-    $log.Invoke("")
-    $log.Invoke("Aguardando 5 segundos antes de iniciar o serviço...")
-    Start-Sleep -Seconds 5
-
-    # Iniciar serviço GSurfRSA Listener
-    $serviceName = "GSurfRSA Listener"
-    $log.Invoke("Verificando serviço '$serviceName'...")
-    $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-    if ($svc) {
-        if ($svc.Status -eq 'Stopped') {
-            try {
-                Start-Service -Name $serviceName -ErrorAction Stop
-                $log.Invoke("Serviço '$serviceName' iniciado com sucesso.")
-            } catch {
-                $log.Invoke("ERRO ao iniciar serviço: $($_.Exception.Message)")
-            }
-        } else {
-            $log.Invoke("Serviço já está em execução (Status: $($svc.Status)).")
-        }
-    } else {
-        $log.Invoke("Serviço '$serviceName' não encontrado. Verifique se a instalação foi concluída corretamente.")
-    }
-
-    $log.Invoke("")
-    $log.Invoke("=== INSTALAÇÃO SITEF CONCLUÍDA ===")
-    $progressSitef.Value = $progressSitef.Maximum
-    [System.Windows.Forms.MessageBox]::Show("Instalação SITEF concluída! Verifique o log para detalhes.", "SITEF")
-}
-
-# ============================================================
-#  EVENTOS DA ABA SITEF
+#  FUNÇÃO PARA INSTALAÇÃO DO SITEF (CORRIGIDA)
 # ============================================================
 function Install-Sitef {
     $log = $script:SitefLogDelegate
@@ -1252,6 +1083,44 @@ function Install-Sitef {
     $log.Invoke("=== INSTALAÇÃO SITEF CONCLUÍDA ===")
     $progressSitef.Value = $progressSitef.Maximum
     [System.Windows.Forms.MessageBox]::Show("Instalação SITEF concluída! Verifique o log para detalhes.", "SITEF")
+}
+
+# ============================================================
+#  EVENTOS DA ABA SITEF
+# ============================================================
+$btnSitefInstall.Add_Click({
+    [System.Windows.Forms.MessageBox]::Show("Botão Instalar SITEF clicado!", "Debug")
+    $btnSitefInstall.Enabled = $false
+    $txtSitefLog.Clear()
+    $progressSitef.Value = 0
+    try {
+        Install-Sitef
+    } catch {
+        $script:SitefLogDelegate.Invoke("ERRO inesperado: $($_.Exception.Message)")
+    }
+    $btnSitefInstall.Enabled = $true
+})
+
+$btnSitefOpenFolder.Add_Click({
+    [System.Windows.Forms.MessageBox]::Show("Botão Abrir pasta clicado!", "Debug")
+    $sitefDir = "C:\SITEF"
+    if (Test-Path $sitefDir) {
+        explorer $sitefDir
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("A pasta C:\SITEF ainda não existe. Execute a instalação primeiro.", "Pasta não encontrada")
+    }
+})
+
+# ============================================================
+#  VARIÁVEL PARA O LOG DO SITEF
+# ============================================================
+$script:SitefLogDelegate = {
+    param($msg)
+    $line = "$msg"
+    $txtSitefLog.AppendText("$line`r`n")
+    $txtSitefLog.SelectionStart = $txtSitefLog.Text.Length
+    $txtSitefLog.ScrollToCaret()
+    [System.Windows.Forms.Application]::DoEvents()
 }
 
 # ============================================================
