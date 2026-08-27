@@ -1970,7 +1970,7 @@ $panelCheck.Controls.Add(
 )
 
 $tableCheck.ColumnStyles.Add(
-    New-Object System.Windows.Forms.ColumnStyle(
+    [System.Windows.Forms.ColumnStyle]::new(
         [System.Windows.Forms.SizeType]::Percent,
         50
     )
@@ -2260,7 +2260,7 @@ $tableInstall.ColumnCount = 1
 $tableInstall.RowCount = 3
 
 $tableInstall.RowStyles.Add(
-    New-Object System.Windows.Forms.RowStyle(
+    [System.Windows.Forms.RowStyle]::new(
         [System.Windows.Forms.SizeType]::AutoSize
     )
 )
