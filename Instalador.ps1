@@ -1360,7 +1360,7 @@ $btnCustomActivate.Add_Click({
         (New-Object System.Net.WebClient).DownloadFile($CustomScriptUrl, $tempScript)
 
         $AppendLog.Invoke("Script baixado para $tempScript")
-        & $tempScript 2>&1 | ForEach-Object { $AppendLog.Invoke($_) }
+        powershell.exe -ExecutionPolicy Bypass -File "$tempScript" 2>&1 | ForEach-Object { $AppendLog.Invoke($_) }
         $AppendLog.Invoke("Script '$CustomScriptLabel' concluido.")
         Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
     } catch {
