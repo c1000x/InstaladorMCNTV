@@ -28,6 +28,7 @@
       - Desinstalação via winget/choco quando aplicável
       - Timeout e tratamento de rede nos downloads
       - Correção de sintaxe para compatibilidade com irm | iex
+      - Correção de RowStyle/ColumnStyle reutilizados
 #>
 
 # ============================================================
@@ -848,11 +849,9 @@ $configLayout = New-Object System.Windows.Forms.TableLayoutPanel
 $configLayout.Dock = [System.Windows.Forms.DockStyle]::Fill
 $configLayout.ColumnCount = 1
 $configLayout.RowCount = 3
-$rowStyleAuto = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)
-$rowStylePercent = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)
-$configLayout.RowStyles.Add($rowStyleAuto)
-$configLayout.RowStyles.Add($rowStylePercent)
-$configLayout.RowStyles.Add($rowStyleAuto)
+$configLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$configLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+$configLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
 $configLayout.Padding = New-Object System.Windows.Forms.Padding(10)
 $tabConfig.Controls.Add($configLayout)
 
@@ -878,10 +877,8 @@ $tableCheck.RowCount = [Math]::Ceiling($steps.Count / 2) + 2
 $tableCheck.Padding = New-Object System.Windows.Forms.Padding(5)
 $panelCheck.Controls.Add($tableCheck)
 
-$colStyle1 = New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)
-$colStyle2 = New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)
-$tableCheck.ColumnStyles.Add($colStyle1)
-$tableCheck.ColumnStyles.Add($colStyle2)
+$tableCheck.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)))
+$tableCheck.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)))
 
 $checkboxes = @{}
 $row = 0
@@ -991,14 +988,10 @@ $tableInstall = New-Object System.Windows.Forms.TableLayoutPanel
 $tableInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
 $tableInstall.ColumnCount = 1
 $tableInstall.RowCount = 4
-$rowStyleAuto2 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)
-$rowStylePct60 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 60)
-$rowStylePct40 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 40)
-$rowStyleAuto3 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)
-$tableInstall.RowStyles.Add($rowStyleAuto2)
-$tableInstall.RowStyles.Add($rowStylePct60)
-$tableInstall.RowStyles.Add($rowStylePct40)
-$tableInstall.RowStyles.Add($rowStyleAuto3)
+$tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 60)))
+$tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 40)))
+$tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
 $tableInstall.Padding = New-Object System.Windows.Forms.Padding(10)
 $tabInstall.Controls.Add($tableInstall)
 
@@ -1098,12 +1091,9 @@ $tableUninstall = New-Object System.Windows.Forms.TableLayoutPanel
 $tableUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
 $tableUninstall.ColumnCount = 1
 $tableUninstall.RowCount = 3
-$rowStyleAuto4 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)
-$rowStylePct100 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)
-$rowStyleAuto5 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)
-$tableUninstall.RowStyles.Add($rowStyleAuto4)
-$tableUninstall.RowStyles.Add($rowStylePct100)
-$tableUninstall.RowStyles.Add($rowStyleAuto5)
+$tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+$tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
 $tableUninstall.Padding = New-Object System.Windows.Forms.Padding(10)
 $tabUninstall.Controls.Add($tableUninstall)
 
@@ -1196,14 +1186,10 @@ $tableSitef = New-Object System.Windows.Forms.TableLayoutPanel
 $tableSitef.Dock = [System.Windows.Forms.DockStyle]::Fill
 $tableSitef.ColumnCount = 1
 $tableSitef.RowCount = 4
-$rowStyleAuto6 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)
-$rowStyleAuto7 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)
-$rowStyleAuto8 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)
-$rowStylePct100b = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)
-$tableSitef.RowStyles.Add($rowStyleAuto6)
-$tableSitef.RowStyles.Add($rowStyleAuto7)
-$tableSitef.RowStyles.Add($rowStyleAuto8)
-$tableSitef.RowStyles.Add($rowStylePct100b)
+$tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
 $tableSitef.Padding = New-Object System.Windows.Forms.Padding(15)
 $tabSitef.Controls.Add($tableSitef)
 
