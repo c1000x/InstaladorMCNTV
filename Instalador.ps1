@@ -545,10 +545,10 @@ $tableLayout = New-Object System.Windows.Forms.TableLayoutPanel
 $tableLayout.Dock = [System.Windows.Forms.DockStyle]::Fill
 $tableLayout.ColumnCount = 3
 $tableLayout.RowCount = 1
-$tableLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33)))
-$tableLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33)))
-$tableLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.34)))
-$tableLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+$tableLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33))) | Out-Null
+$tableLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33))) | Out-Null
+$tableLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.34))) | Out-Null
+$tableLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100))) | Out-Null
 $tableLayout.Padding = New-Object System.Windows.Forms.Padding(10, 10, 10, 10)
 $tableLayout.BackColor = $ColorBackground
 $tabProvisioning.Controls.Add($tableLayout)
@@ -599,7 +599,12 @@ foreach ($key in $steps.Keys) {
 
 $chkDryRun = New-Object System.Windows.Forms.CheckBox
 $chkDryRun.Text = "Modo Simulacao (dry-run)"
-$chkDryRun.Location = New-Object System.Drawing.Point(10, $y + 3)
+# CORREÇÃO: calcular a coordenada numa variável antes de passar ao New-Object.
+# "New-Object Tipo(arg1, $y + 3)" com uma expressão aritmética dentro do atalho
+# de parênteses pode fazer o PowerShell contar os argumentos errado e falhar
+# com "Não é possível localizar uma sobrecarga ... contagem de argumentos".
+$yDryRun = $y + 3
+$chkDryRun.Location = New-Object System.Drawing.Point(10, $yDryRun)
 $chkDryRun.Size = New-Object System.Drawing.Size(350, 22)
 $chkDryRun.Font = $FontNormal
 $chkDryRun.ForeColor = [System.Drawing.Color]::DarkBlue
@@ -608,7 +613,8 @@ $panelSystem.Controls.Add($chkDryRun)
 
 $btnSelAll = New-Object System.Windows.Forms.Button
 $btnSelAll.Text = "Marcar todos"
-$btnSelAll.Location = New-Object System.Drawing.Point(10, $y + 35)
+$ySelAll = $y + 35
+$btnSelAll.Location = New-Object System.Drawing.Point(10, $ySelAll)
 $btnSelAll.Size = New-Object System.Drawing.Size(150, 30)
 $btnSelAll.Font = $FontButton
 $btnSelAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -619,7 +625,8 @@ $panelSystem.Controls.Add($btnSelAll)
 
 $btnSelNone = New-Object System.Windows.Forms.Button
 $btnSelNone.Text = "Desmarcar todos"
-$btnSelNone.Location = New-Object System.Drawing.Point(180, $y + 35)
+$ySelNone = $y + 35
+$btnSelNone.Location = New-Object System.Drawing.Point(180, $ySelNone)
 $btnSelNone.Size = New-Object System.Drawing.Size(150, 30)
 $btnSelNone.Font = $FontButton
 $btnSelNone.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -630,7 +637,8 @@ $panelSystem.Controls.Add($btnSelNone)
 
 $btnRun = New-Object System.Windows.Forms.Button
 $btnRun.Text = "Executar configuracao"
-$btnRun.Location = New-Object System.Drawing.Point(10, $y + 80)
+$yBtnRun = $y + 80
+$btnRun.Location = New-Object System.Drawing.Point(10, $yBtnRun)
 $btnRun.Size = New-Object System.Drawing.Size(320, 30)
 $btnRun.Font = $FontButton
 $btnRun.BackColor = $ColorPrimary
