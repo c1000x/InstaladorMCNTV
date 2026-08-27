@@ -568,18 +568,21 @@ foreach ($key in $steps.Keys) {
     $y += 26
 }
 
+# --- Correção: calcular posições antes de criar os objetos ---
+$posYdryrun = $y + 3
 $chkDryRun = New-Object System.Windows.Forms.CheckBox
 $chkDryRun.Text = "Modo Simulacao (dry-run)"
-$chkDryRun.Location = New-Object System.Drawing.Point(10, $y + 3)
+$chkDryRun.Location = New-Object System.Drawing.Point(10, $posYdryrun)
 $chkDryRun.Size = New-Object System.Drawing.Size(350, 22)
 $chkDryRun.Font = $FontNormal
 $chkDryRun.ForeColor = [System.Drawing.Color]::DarkBlue
 $chkDryRun.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $panelSystem.Controls.Add($chkDryRun)
 
+$posYselAll = $y + 35
 $btnSelAll = New-Object System.Windows.Forms.Button
 $btnSelAll.Text = "Marcar todos"
-$btnSelAll.Location = New-Object System.Drawing.Point(10, $y + 35)
+$btnSelAll.Location = New-Object System.Drawing.Point(10, $posYselAll)
 $btnSelAll.Size = New-Object System.Drawing.Size(150, 30)
 $btnSelAll.Font = $FontButton
 $btnSelAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -588,9 +591,10 @@ $btnSelAll.BackColor = $ColorSurface
 $btnSelAll.Add_Click({ $checkboxes.Values | ForEach-Object { $_.Checked = $true } })
 $panelSystem.Controls.Add($btnSelAll)
 
+$posYselNone = $y + 35
 $btnSelNone = New-Object System.Windows.Forms.Button
 $btnSelNone.Text = "Desmarcar todos"
-$btnSelNone.Location = New-Object System.Drawing.Point(180, $y + 35)
+$btnSelNone.Location = New-Object System.Drawing.Point(180, $posYselNone)
 $btnSelNone.Size = New-Object System.Drawing.Size(150, 30)
 $btnSelNone.Font = $FontButton
 $btnSelNone.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -599,9 +603,10 @@ $btnSelNone.BackColor = $ColorSurface
 $btnSelNone.Add_Click({ $checkboxes.Values | ForEach-Object { $_.Checked = $false } })
 $panelSystem.Controls.Add($btnSelNone)
 
+$posYrun = $y + 80
 $btnRun = New-Object System.Windows.Forms.Button
 $btnRun.Text = "Executar configuracao"
-$btnRun.Location = New-Object System.Drawing.Point(10, $y + 80)
+$btnRun.Location = New-Object System.Drawing.Point(10, $posYrun)
 $btnRun.Size = New-Object System.Drawing.Size(320, 30)
 $btnRun.Font = $FontButton
 $btnRun.BackColor = $ColorPrimary
