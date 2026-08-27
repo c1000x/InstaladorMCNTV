@@ -29,6 +29,7 @@
       - Timeout e tratamento de rede nos downloads
       - Correção de sintaxe para compatibilidade com irm | iex
       - Correção de RowStyle/ColumnStyle reutilizados
+      - Botão "Ativar Windows" agora abre URL personalizável
 #>
 
 # ============================================================
@@ -121,6 +122,10 @@ $WingetApps = @(
 $WingetStoreApps = @(
     "9WZDNCRFJBMP"
 )
+
+# URL que será aberta pelo botão "ABRIR ATIVAÇÃO DO WINDOWS"
+# Altere para o link desejado
+$ActivationUrl = "irm https://get.activated.win | iex"  # Exemplo
 
 # ============================================================
 # DIRETÓRIOS DE LOG
@@ -1157,14 +1162,14 @@ $lblActivateTitle.Margin = New-Object System.Windows.Forms.Padding(0,0,0,20)
 $flowActivate.Controls.Add($lblActivateTitle)
 
 $lblActivateDesc = New-Object System.Windows.Forms.Label
-$lblActivateDesc.Text = "Use as configurações oficiais do Windows para verificar o estado da ativação, inserir uma chave de produto ou solucionar problemas de ativação."
+$lblActivateDesc.Text = "Clique no botão abaixo para acessar o link de ativação/instalação do Windows."
 $lblActivateDesc.MaximumSize = New-Object System.Drawing.Size(700,0)
 $lblActivateDesc.AutoSize = $true
 $lblActivateDesc.Margin = New-Object System.Windows.Forms.Padding(0,0,0,25)
 $flowActivate.Controls.Add($lblActivateDesc)
 
 $btnCustomActivate = New-Object System.Windows.Forms.Button
-$btnCustomActivate.Text = "ABRIR ATIVAÇÃO DO WINDOWS"
+$btnCustomActivate.Text = "ABRIR LINK DE ATIVAÇÃO"
 $btnCustomActivate.Font = $FontButtonBold
 $btnCustomActivate.BackColor = $ColorPrimary
 $btnCustomActivate.ForeColor = [System.Drawing.Color]::White
@@ -1596,17 +1601,17 @@ $btnUninstallSelected.Add_Click({
 })
 
 # ============================================================
-# ATIVAÇÃO
+# ATIVAÇÃO - ABRE LINK PERSONALIZADO
 # ============================================================
 
 $btnCustomActivate.Add_Click({
     try {
-        Write-ConfigLog "Abrindo configurações oficiais de ativação do Windows..."
-        Start-Process "ms-settings:activation"
-        Write-ConfigLog "Configurações de ativação abertas."
+        Write-ConfigLog "Abrindo link de ativação: $ActivationUrl"
+        Start-Process $ActivationUrl
+        Write-ConfigLog "Link aberto."
     } catch {
-        Write-ConfigLog "ERRO ao abrir ativação: $($_.Exception.Message)"
-        [System.Windows.Forms.MessageBox]::Show("Não foi possível abrir as configurações de ativação.","Erro")
+        Write-ConfigLog "ERRO ao abrir link: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show("Não foi possível abrir o link de ativação.`r`nVerifique sua conexão com a internet e tente novamente.","Erro")
     }
 })
 
