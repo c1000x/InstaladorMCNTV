@@ -988,7 +988,7 @@ $btnCustomActivate.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 20)
 $flowActivate.Controls.Add($btnCustomActivate)
 
 # ============================================================
-#  ABA 5: SITEF (LAYOUT ORGANIZADO)
+#  ABA 5: SITEF (CORRIGIDA – COM AUTOSIZE)
 # ============================================================
 $tabSitef = New-Object System.Windows.Forms.TabPage
 $tabSitef.Text = "SITEF"
@@ -1027,14 +1027,14 @@ $lblSitefDesc.AutoSize = $true
 $lblSitefDesc.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 15)
 $tableSitef.Controls.Add($lblSitefDesc, 0, 1)
 
-# Painel de botões – FlowLayout horizontal com tamanhos fixos para organização
+# Painel de botões – com AutoSize
 $flowSitefButtons = New-Object System.Windows.Forms.FlowLayoutPanel
 $flowSitefButtons.Dock = [System.Windows.Forms.DockStyle]::Fill
 $flowSitefButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
 $flowSitefButtons.WrapContents = $true
-$flowSitefButtons.AutoSize = $false
-$flowSitefButtons.Height = 55  # Altura fixa para evitar compressão
-$flowSitefButtons.Padding = New-Object System.Windows.Forms.Padding(5, 5, 5, 5)
+$flowSitefButtons.AutoSize = $true
+$flowSitefButtons.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+$flowSitefButtons.Padding = New-Object System.Windows.Forms.Padding(5)
 $tableSitef.Controls.Add($flowSitefButtons, 0, 2)
 
 # Botão: Instalar SITEF
