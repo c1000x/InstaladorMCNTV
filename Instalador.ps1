@@ -568,7 +568,7 @@ foreach ($key in $steps.Keys) {
     $y += 26
 }
 
-# --- Correção: calcular posições antes de criar os objetos ---
+# --- CORREÇÃO: calculamos as posições Y antes de criar os objetos ---
 $posYdryrun = $y + 3
 $chkDryRun = New-Object System.Windows.Forms.CheckBox
 $chkDryRun.Text = "Modo Simulacao (dry-run)"
