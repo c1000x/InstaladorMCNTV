@@ -48,7 +48,8 @@ $WingetApps = @(
     "Adobe.Acrobat.Reader.64-bit",
     "Oracle.JavaRuntimeEnvironment",
     "Mozilla.Firefox.pt-BR",
-    "7zip.7zip"
+    "7zip.7zip",
+    "Microsoft.Office"
 )
 $WingetStoreApps = @("9WZDNCRFJBMP")
 
