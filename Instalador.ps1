@@ -438,7 +438,6 @@ function Download-DllFly {
     $log.Invoke("=== BAIXANDO DLL_FLY ===")
     $log.Invoke("")
 
-    # Define o máximo da barra de progresso para 100
     $progressSitef.Maximum = 100
     $progressSitef.Value = 0
 
@@ -446,6 +445,7 @@ function Download-DllFly {
     $targetDir = Join-Path $baseDir "DLL_FLY"
     $zipUrl = "https://github.com/c1000x/InstaladorMCNTV/raw/a4dbdb2b2fbbea02d3d4109220199490e4e9e1bf/DLL_FLY.zip"
     $zipFile = Join-Path $baseDir "DLL_FLY.zip"
+    $tempExtractDir = Join-Path $baseDir "DLL_FLY_temp"
 
     if (-not (Test-Path $targetDir)) {
         $log.Invoke("Criando diretório $targetDir ...")
@@ -453,6 +453,7 @@ function Download-DllFly {
         $log.Invoke("Diretório criado.")
     }
 
+    # Baixar ZIP
     $log.Invoke("Baixando DLL_FLY.zip (11.6 MB) ...")
     try {
         $webClient = New-Object System.Net.WebClient
@@ -465,27 +466,44 @@ function Download-DllFly {
         return
     }
 
-    $log.Invoke("Extraindo DLL_FLY.zip para $targetDir ...")
+    # Extrair para pasta temporária
+    $log.Invoke("Extraindo DLL_FLY.zip ...")
     try {
-        Expand-Archive -Path $zipFile -DestinationPath $targetDir -Force
-        $log.Invoke("Extraído com sucesso.")
-        $progressSitef.Value = 70
+        # Remove pasta temporária se existir
+        if (Test-Path $tempExtractDir) { Remove-Item $tempExtractDir -Recurse -Force }
+        New-Item -ItemType Directory -Path $tempExtractDir -Force | Out-Null
+
+        Expand-Archive -Path $zipFile -DestinationPath $tempExtractDir -Force
+        $log.Invoke("Extraído para pasta temporária.")
+        $progressSitef.Value = 60
     } catch {
         $log.Invoke("ERRO ao extrair DLL_FLY.zip: $($_.Exception.Message)")
-        $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
-        try {
-            [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $targetDir, $true)
-            $log.Invoke("Extraído com sucesso via fallback.")
-            $progressSitef.Value = 70
-        } catch {
-            $log.Invoke("Falha na extração: $($_.Exception.Message)")
-            return
-        }
+        Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+        return
     }
 
+    # Mover conteúdo da subpasta (se houver) para o destino final
+    $log.Invoke("Organizando arquivos em $targetDir ...")
+    $items = Get-ChildItem -Path $tempExtractDir -Recurse -File
+    foreach ($item in $items) {
+        $relativePath = $item.FullName.Substring($tempExtractDir.Length + 1)
+        $destFile = Join-Path $targetDir $relativePath
+        $destDir = Split-Path $destFile -Parent
+        if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+        Move-Item -Path $item.FullName -Destination $destFile -Force
+    }
+
+    # Remover pastas vazias da extração temporária
+    Remove-Item $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+    $log.Invoke("Arquivos organizados.")
+    $progressSitef.Value = 80
+
+    # Remover ZIP
     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
     $log.Invoke("Arquivo ZIP removido.")
 
+    # Adicionar exclusão
     $log.Invoke("Adicionando exclusão no Windows Defender para: $targetDir")
     try {
         Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
@@ -507,7 +525,6 @@ function Download-DllFlyEmbarcado {
     $log.Invoke("=== BAIXANDO DLL_FLY_EMBARCADO ===")
     $log.Invoke("")
 
-    # Define o máximo da barra de progresso para 100
     $progressSitef.Maximum = 100
     $progressSitef.Value = 0
 
@@ -515,6 +532,7 @@ function Download-DllFlyEmbarcado {
     $targetDir = Join-Path $baseDir "DLL_FLY_EMBARCADO"
     $zipUrl = "https://github.com/c1000x/InstaladorMCNTV/raw/a4dbdb2b2fbbea02d3d4109220199490e4e9e1bf/DLL_FLY_EMBARCADO.zip"
     $zipFile = Join-Path $baseDir "DLL_FLY_EMBARCADO.zip"
+    $tempExtractDir = Join-Path $baseDir "DLL_FLY_EMBARCADO_temp"
 
     if (-not (Test-Path $targetDir)) {
         $log.Invoke("Criando diretório $targetDir ...")
@@ -522,6 +540,7 @@ function Download-DllFlyEmbarcado {
         $log.Invoke("Diretório criado.")
     }
 
+    # Baixar ZIP
     $log.Invoke("Baixando DLL_FLY_EMBARCADO.zip (11.6 MB) ...")
     try {
         $webClient = New-Object System.Net.WebClient
@@ -534,27 +553,43 @@ function Download-DllFlyEmbarcado {
         return
     }
 
-    $log.Invoke("Extraindo DLL_FLY_EMBARCADO.zip para $targetDir ...")
+    # Extrair para pasta temporária
+    $log.Invoke("Extraindo DLL_FLY_EMBARCADO.zip ...")
     try {
-        Expand-Archive -Path $zipFile -DestinationPath $targetDir -Force
-        $log.Invoke("Extraído com sucesso.")
-        $progressSitef.Value = 70
+        if (Test-Path $tempExtractDir) { Remove-Item $tempExtractDir -Recurse -Force }
+        New-Item -ItemType Directory -Path $tempExtractDir -Force | Out-Null
+
+        Expand-Archive -Path $zipFile -DestinationPath $tempExtractDir -Force
+        $log.Invoke("Extraído para pasta temporária.")
+        $progressSitef.Value = 60
     } catch {
         $log.Invoke("ERRO ao extrair DLL_FLY_EMBARCADO.zip: $($_.Exception.Message)")
-        $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
-        try {
-            [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $targetDir, $true)
-            $log.Invoke("Extraído com sucesso via fallback.")
-            $progressSitef.Value = 70
-        } catch {
-            $log.Invoke("Falha na extração: $($_.Exception.Message)")
-            return
-        }
+        Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+        return
     }
 
+    # Mover conteúdo da subpasta (se houver) para o destino final
+    $log.Invoke("Organizando arquivos em $targetDir ...")
+    $items = Get-ChildItem -Path $tempExtractDir -Recurse -File
+    foreach ($item in $items) {
+        $relativePath = $item.FullName.Substring($tempExtractDir.Length + 1)
+        $destFile = Join-Path $targetDir $relativePath
+        $destDir = Split-Path $destFile -Parent
+        if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+        Move-Item -Path $item.FullName -Destination $destFile -Force
+    }
+
+    # Remover pastas vazias da extração temporária
+    Remove-Item $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+    $log.Invoke("Arquivos organizados.")
+    $progressSitef.Value = 80
+
+    # Remover ZIP
     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
     $log.Invoke("Arquivo ZIP removido.")
 
+    # Adicionar exclusão
     $log.Invoke("Adicionando exclusão no Windows Defender para: $targetDir")
     try {
         Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
