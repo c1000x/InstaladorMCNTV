@@ -1051,10 +1051,6 @@ function Get-WebClientWithTimeout {
     param([int]$TimeoutSeconds = 30)
     $client = New-Object System.Net.WebClient
     $client.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-    # WebClient não tem timeout direto, usamos WebRequest por baixo
-    # Mas para simplificar, usamos Invoke-WebRequest com timeout para download
-    # No entanto, precisamos baixar para arquivo, então usamos WebClient com um trick
-    # Melhor: usar System.Net.HttpWebRequest
     return $client
 }
 
@@ -2033,19 +2029,11 @@ $panelCheck.Controls.Add(
     $tableCheck
 )
 
-$tableCheck.ColumnStyles.Add(
-    [System.Windows.Forms.ColumnStyle]::new(
-        [System.Windows.Forms.SizeType]::Percent,
-        50
-    )
-)
-
-$tableCheck.ColumnStyles.Add(
-    New-Object System.Windows.Forms.ColumnStyle(
-        [System.Windows.Forms.SizeType]::Percent,
-        50
-    )
-)
+# Adicionando estilos de coluna de forma compatível
+$colStyle1 = New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)
+$colStyle2 = New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)
+$tableCheck.ColumnStyles.Add($colStyle1)
+$tableCheck.ColumnStyles.Add($colStyle2)
 
 $checkboxes = @{}
 
@@ -2337,31 +2325,16 @@ $tableInstall.Dock =
 $tableInstall.ColumnCount = 1
 $tableInstall.RowCount = 4
 
-$tableInstall.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
-        [System.Windows.Forms.SizeType]::AutoSize
-    )
-)
+# Adicionando estilos de linha de forma compatível
+$rowStyle1 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)
+$rowStyle2 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 60)
+$rowStyle3 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 40)
+$rowStyle4 = New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)
 
-$tableInstall.RowStyles.Add(
-    New-Object System.Windows.Forms.RowStyle(
-        [System.Windows.Forms.SizeType]::Percent,
-        60
-    )
-)
-
-$tableInstall.RowStyles.Add(
-    New-Object System.Windows.Forms.RowStyle(
-        [System.Windows.Forms.SizeType]::Percent,
-        40
-    )
-)
-
-$tableInstall.RowStyles.Add(
-    New-Object System.Windows.Forms.RowStyle(
-        [System.Windows.Forms.SizeType]::AutoSize
-    )
-)
+$tableInstall.RowStyles.Add($rowStyle1)
+$tableInstall.RowStyles.Add($rowStyle2)
+$tableInstall.RowStyles.Add($rowStyle3)
+$tableInstall.RowStyles.Add($rowStyle4)
 
 $tableInstall.Padding =
     New-Object System.Windows.Forms.Padding(
