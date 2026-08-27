@@ -1,7 +1,7 @@
 <#
     ProvisioningTool.ps1
     Interface com abas separadas para cada função.
-    Layout automático com FlowLayoutPanel – sem coordenadas fixas.
+    Layout melhorado com TableLayoutPanel e GroupBox.
     Inclui botões DLL_FLY e DLL_FLY_EMBARCADO com exclusão automática no Windows Defender.
 #>
 
@@ -68,7 +68,7 @@ $script:Results = [ordered]@{}
 $script:CancelRequested = $false
 
 # ============================================================
-#  FUNCOES DE CADA ETAPA (Provisionamento)
+#  FUNCOES DE CADA ETAPA (Provisionamento) – mantidas
 # ============================================================
 function Step-RestorePoint {
     param($Log, [bool]$DryRun)
@@ -282,7 +282,7 @@ function Get-InstalledProgramsList {
 }
 
 # ============================================================
-#  FUNÇÃO DE INSTALAÇÃO SITEF (COMPLETA)
+#  FUNÇÃO DE INSTALAÇÃO SITEF
 # ============================================================
 function Install-Sitef {
     $log = $script:SitefLogDelegate
@@ -434,7 +434,7 @@ function Install-Sitef {
 }
 
 # ============================================================
-#  FUNÇÕES: DOWNLOAD DLL_FLY E DLL_FLY_EMBARCADO (COM EXCLUSÃO NO WINDOWS DEFENDER)
+#  FUNÇÕES: DOWNLOAD DLL_FLY E DLL_FLY_EMBARCADO (COM EXCLUSÃO)
 # ============================================================
 function Download-DllFly {
     $log = $script:SitefLogDelegate
@@ -446,14 +446,12 @@ function Download-DllFly {
     $zipUrl = "https://github.com/c1000x/InstaladorMCNTV/raw/a4dbdb2b2fbbea02d3d4109220199490e4e9e1bf/DLL_FLY.zip"
     $zipFile = Join-Path $baseDir "DLL_FLY.zip"
 
-    # Criar pasta destino
     if (-not (Test-Path $targetDir)) {
         $log.Invoke("Criando diretório $targetDir ...")
         New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
         $log.Invoke("Diretório criado.")
     }
 
-    # Baixar o ZIP
     $log.Invoke("Baixando DLL_FLY.zip (11.6 MB) ...")
     try {
         $webClient = New-Object System.Net.WebClient
@@ -465,7 +463,6 @@ function Download-DllFly {
         return
     }
 
-    # Extrair para a pasta DLL_FLY
     $log.Invoke("Extraindo DLL_FLY.zip para $targetDir ...")
     try {
         Expand-Archive -Path $zipFile -DestinationPath $targetDir -Force
@@ -482,11 +479,9 @@ function Download-DllFly {
         }
     }
 
-    # Remover o ZIP após extração
     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
     $log.Invoke("Arquivo ZIP removido.")
 
-    # --- ADICIONAR EXCLUSÃO NO WINDOWS DEFENDER ---
     $log.Invoke("Adicionando exclusão no Windows Defender para: $targetDir")
     try {
         Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
@@ -512,14 +507,12 @@ function Download-DllFlyEmbarcado {
     $zipUrl = "https://github.com/c1000x/InstaladorMCNTV/raw/a4dbdb2b2fbbea02d3d4109220199490e4e9e1bf/DLL_FLY_EMBARCADO.zip"
     $zipFile = Join-Path $baseDir "DLL_FLY_EMBARCADO.zip"
 
-    # Criar pasta destino
     if (-not (Test-Path $targetDir)) {
         $log.Invoke("Criando diretório $targetDir ...")
         New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
         $log.Invoke("Diretório criado.")
     }
 
-    # Baixar o ZIP
     $log.Invoke("Baixando DLL_FLY_EMBARCADO.zip (11.6 MB) ...")
     try {
         $webClient = New-Object System.Net.WebClient
@@ -531,7 +524,6 @@ function Download-DllFlyEmbarcado {
         return
     }
 
-    # Extrair para a pasta DLL_FLY_EMBARCADO
     $log.Invoke("Extraindo DLL_FLY_EMBARCADO.zip para $targetDir ...")
     try {
         Expand-Archive -Path $zipFile -DestinationPath $targetDir -Force
@@ -548,11 +540,9 @@ function Download-DllFlyEmbarcado {
         }
     }
 
-    # Remover o ZIP após extração
     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
     $log.Invoke("Arquivo ZIP removido.")
 
-    # --- ADICIONAR EXCLUSÃO NO WINDOWS DEFENDER ---
     $log.Invoke("Adicionando exclusão no Windows Defender para: $targetDir")
     try {
         Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
@@ -569,7 +559,7 @@ function Download-DllFlyEmbarcado {
 }
 
 # ============================================================
-#  INTERFACE GRAFICA (ABAS SEPARADAS)
+#  INTERFACE GRAFICA MELHORADA
 # ============================================================
 $ColorBackground = [System.Drawing.Color]::FromArgb(245,247,250)
 $ColorSurface    = [System.Drawing.Color]::White
@@ -585,8 +575,9 @@ $FontSmall  = New-Object System.Drawing.Font("Segoe UI", 8)
 $FontHeader = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
 $FontTitle  = New-Object System.Drawing.Font("Segoe UI Semibold", 18)
 $FontButton = New-Object System.Drawing.Font("Segoe UI", 9)
+$FontButtonBold = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
 
-# ----- Formulário principal -----
+# ----- Formulário -----
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "MCNTV Installer - Provisionamento Windows"
 $form.StartPosition = "CenterScreen"
@@ -597,7 +588,7 @@ $form.BackColor = $ColorBackground
 $form.Font = $FontNormal
 $form.AutoSize = $true
 $form.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
-$form.MinimumSize = New-Object System.Drawing.Size(600, 700)
+$form.MinimumSize = New-Object System.Drawing.Size(750, 700)
 
 # ----- Painel principal -----
 $mainPanel = New-Object System.Windows.Forms.Panel
@@ -613,20 +604,38 @@ $tabControl.Font = $FontNormal
 $mainPanel.Controls.Add($tabControl)
 
 # ============================================================
-#  ABA 1: CONFIGURAÇÃO DO SISTEMA
+#  ABA 1: CONFIGURAÇÃO (com TableLayoutPanel 2 colunas)
 # ============================================================
 $tabConfig = New-Object System.Windows.Forms.TabPage
 $tabConfig.Text = "Configuração do Sistema"
 $tabConfig.BackColor = $ColorBackground
 $tabControl.Controls.Add($tabConfig)
 
-$flowConfig = New-Object System.Windows.Forms.FlowLayoutPanel
-$flowConfig.Dock = [System.Windows.Forms.DockStyle]::Fill
-$flowConfig.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
-$flowConfig.AutoScroll = $true
-$flowConfig.WrapContents = $false
-$flowConfig.Padding = New-Object System.Windows.Forms.Padding(10)
-$tabConfig.Controls.Add($flowConfig)
+$mainTableConfig = New-Object System.Windows.Forms.TableLayoutPanel
+$mainTableConfig.Dock = [System.Windows.Forms.DockStyle]::Fill
+$mainTableConfig.ColumnCount = 1
+$mainTableConfig.RowCount = 2
+$mainTableConfig.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 80)))
+$mainTableConfig.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 20)))
+$mainTableConfig.Padding = New-Object System.Windows.Forms.Padding(10)
+$tabConfig.Controls.Add($mainTableConfig)
+
+# Painel superior: checkboxes em 2 colunas
+$panelCheckboxes = New-Object System.Windows.Forms.Panel
+$panelCheckboxes.Dock = [System.Windows.Forms.DockStyle]::Fill
+$panelCheckboxes.AutoScroll = $true
+$mainTableConfig.Controls.Add($panelCheckboxes, 0, 0)
+
+$tableCheck = New-Object System.Windows.Forms.TableLayoutPanel
+$tableCheck.Dock = [System.Windows.Forms.DockStyle]::Fill
+$tableCheck.ColumnCount = 2
+$tableCheck.RowCount = [Math]::Ceiling($steps.Count / 2) + 2  # +2 para dry-run e espaço
+$tableCheck.Padding = New-Object System.Windows.Forms.Padding(5)
+$panelCheckboxes.Controls.Add($tableCheck)
+
+# Adiciona colunas com 50% cada
+$tableCheck.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)))
+$tableCheck.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)))
 
 $steps = [ordered]@{
     "Ponto de Restauracao"                  = { param($l,$d) Step-RestorePoint -Log $l -DryRun $d }
@@ -643,6 +652,8 @@ $steps = [ordered]@{
 
 $UncheckedByDefault = @("Versoes Anteriores (Shadow Copy)")
 $checkboxes = @{}
+$row = 0
+$col = 0
 foreach ($key in $steps.Keys) {
     $cb = New-Object System.Windows.Forms.CheckBox
     $cb.Text = $key
@@ -650,18 +661,35 @@ foreach ($key in $steps.Keys) {
     $cb.Font = $FontNormal
     $cb.ForeColor = $ColorText
     $cb.AutoSize = $true
-    $cb.Margin = New-Object System.Windows.Forms.Padding(3, 2, 3, 0)
-    $flowConfig.Controls.Add($cb)
+    $cb.Margin = New-Object System.Windows.Forms.Padding(5, 3, 5, 3)
+    $tableCheck.Controls.Add($cb, $col, $row)
     $checkboxes[$key] = $cb
+    $col++
+    if ($col -eq 2) { $col = 0; $row++ }
 }
 
+# Dry-run ocupa a próxima linha inteira (colspan 2)
 $chkDryRun = New-Object System.Windows.Forms.CheckBox
 $chkDryRun.Text = "Modo Simulacao (dry-run)"
 $chkDryRun.Font = $FontNormal
 $chkDryRun.ForeColor = [System.Drawing.Color]::DarkBlue
 $chkDryRun.AutoSize = $true
-$chkDryRun.Margin = New-Object System.Windows.Forms.Padding(3, 8, 3, 5)
-$flowConfig.Controls.Add($chkDryRun)
+$chkDryRun.Margin = New-Object System.Windows.Forms.Padding(5, 10, 5, 5)
+$tableCheck.Controls.Add($chkDryRun, 0, $row)
+$tableCheck.SetColumnSpan($chkDryRun, 2)
+
+# Painel inferior: botões
+$panelButtonsConfig = New-Object System.Windows.Forms.Panel
+$panelButtonsConfig.Dock = [System.Windows.Forms.DockStyle]::Fill
+$panelButtonsConfig.Padding = New-Object System.Windows.Forms.Padding(10, 5, 10, 5)
+$mainTableConfig.Controls.Add($panelButtonsConfig, 0, 1)
+
+$flowButtonsConfig = New-Object System.Windows.Forms.FlowLayoutPanel
+$flowButtonsConfig.Dock = [System.Windows.Forms.DockStyle]::Fill
+$flowButtonsConfig.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+$flowButtonsConfig.WrapContents = $true
+$flowButtonsConfig.Padding = New-Object System.Windows.Forms.Padding(5)
+$panelButtonsConfig.Controls.Add($flowButtonsConfig)
 
 $btnSelAll = New-Object System.Windows.Forms.Button
 $btnSelAll.Text = "Marcar todos"
@@ -669,10 +697,9 @@ $btnSelAll.Font = $FontButton
 $btnSelAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnSelAll.FlatAppearance.BorderColor = $ColorBorder
 $btnSelAll.BackColor = $ColorSurface
-$btnSelAll.AutoSize = $true
-$btnSelAll.Margin = New-Object System.Windows.Forms.Padding(3, 5, 3, 0)
+$btnSelAll.Size = New-Object System.Drawing.Size(120, 30)
 $btnSelAll.Add_Click({ $checkboxes.Values | ForEach-Object { $_.Checked = $true } })
-$flowConfig.Controls.Add($btnSelAll)
+$flowButtonsConfig.Controls.Add($btnSelAll)
 
 $btnSelNone = New-Object System.Windows.Forms.Button
 $btnSelNone.Text = "Desmarcar todos"
@@ -680,21 +707,20 @@ $btnSelNone.Font = $FontButton
 $btnSelNone.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnSelNone.FlatAppearance.BorderColor = $ColorBorder
 $btnSelNone.BackColor = $ColorSurface
-$btnSelNone.AutoSize = $true
-$btnSelNone.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
+$btnSelNone.Size = New-Object System.Drawing.Size(120, 30)
 $btnSelNone.Add_Click({ $checkboxes.Values | ForEach-Object { $_.Checked = $false } })
-$flowConfig.Controls.Add($btnSelNone)
+$flowButtonsConfig.Controls.Add($btnSelNone)
 
 $btnRun = New-Object System.Windows.Forms.Button
 $btnRun.Text = "Executar configuração"
-$btnRun.Font = $FontButton
+$btnRun.Font = $FontButtonBold
 $btnRun.BackColor = $ColorPrimary
 $btnRun.ForeColor = [System.Drawing.Color]::White
 $btnRun.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnRun.FlatAppearance.BorderSize = 0
-$btnRun.AutoSize = $true
-$btnRun.Margin = New-Object System.Windows.Forms.Padding(3, 8, 3, 3)
-$flowConfig.Controls.Add($btnRun)
+$btnRun.Size = New-Object System.Drawing.Size(180, 30)
+$btnRun.Margin = New-Object System.Windows.Forms.Padding(20, 0, 0, 0)
+$flowButtonsConfig.Controls.Add($btnRun)
 
 # ============================================================
 #  ABA 2: INSTALAR APLICATIVOS
@@ -709,33 +735,49 @@ $flowInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
 $flowInstall.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
 $flowInstall.AutoScroll = $true
 $flowInstall.WrapContents = $false
-$flowInstall.Padding = New-Object System.Windows.Forms.Padding(10)
+$flowInstall.Padding = New-Object System.Windows.Forms.Padding(15)
 $tabInstall.Controls.Add($flowInstall)
+
+# GroupBox para a lista de apps
+$grpInstallList = New-Object System.Windows.Forms.GroupBox
+$grpInstallList.Text = "Aplicativos disponíveis"
+$grpInstallList.Font = $FontHeader
+$grpInstallList.ForeColor = $ColorText
+$grpInstallList.AutoSize = $true
+$grpInstallList.Padding = New-Object System.Windows.Forms.Padding(10)
+$flowInstall.Controls.Add($grpInstallList)
+
+$flowInstallInner = New-Object System.Windows.Forms.FlowLayoutPanel
+$flowInstallInner.Dock = [System.Windows.Forms.DockStyle]::Fill
+$flowInstallInner.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
+$flowInstallInner.AutoSize = $true
+$flowInstallInner.WrapContents = $false
+$grpInstallList.Controls.Add($flowInstallInner)
 
 $lblInstallInfo = New-Object System.Windows.Forms.Label
 $lblInstallInfo.Text = "Buscar:"
 $lblInstallInfo.Font = $FontNormal
 $lblInstallInfo.ForeColor = $ColorMuted
 $lblInstallInfo.AutoSize = $true
-$lblInstallInfo.Margin = New-Object System.Windows.Forms.Padding(3, 3, 3, 0)
-$flowInstall.Controls.Add($lblInstallInfo)
+$flowInstallInner.Controls.Add($lblInstallInfo)
 
 $txtSearchInstall = New-Object System.Windows.Forms.TextBox
 $txtSearchInstall.Font = $FontNormal
-$txtSearchInstall.Width = 300
+$txtSearchInstall.Width = 350
+$txtSearchInstall.Height = 22
 $txtSearchInstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
-$flowInstall.Controls.Add($txtSearchInstall)
+$flowInstallInner.Controls.Add($txtSearchInstall)
 
 $clbInstall = New-Object System.Windows.Forms.CheckedListBox
 $clbInstall.CheckOnClick = $true
 $clbInstall.Font = $FontNormal
 $clbInstall.Height = 250
-$clbInstall.Width = 350
+$clbInstall.Width = 400
 $clbInstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
 $allLabels = Build-AppCatalogLabels
 $clbInstall.Tag = $allLabels
 foreach ($label in $allLabels) { [void]$clbInstall.Items.Add($label, $true) }
-$flowInstall.Controls.Add($clbInstall)
+$flowInstallInner.Controls.Add($clbInstall)
 
 $txtSearchInstall.Add_TextChanged({
     $search = $txtSearchInstall.Text.Trim().ToLower()
@@ -756,13 +798,13 @@ $txtSearchInstall.Add_TextChanged({
 
 $btnInstallSelected = New-Object System.Windows.Forms.Button
 $btnInstallSelected.Text = "INSTALAR SELECIONADOS (Paralelo)"
-$btnInstallSelected.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+$btnInstallSelected.Font = $FontButtonBold
 $btnInstallSelected.BackColor = $ColorSuccess
 $btnInstallSelected.ForeColor = [System.Drawing.Color]::White
 $btnInstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnInstallSelected.FlatAppearance.BorderSize = 0
-$btnInstallSelected.AutoSize = $true
-$btnInstallSelected.Margin = New-Object System.Windows.Forms.Padding(3, 8, 3, 3)
+$btnInstallSelected.Size = New-Object System.Drawing.Size(400, 40)
+$btnInstallSelected.Anchor = [System.Windows.Forms.AnchorStyles]::Left
 $flowInstall.Controls.Add($btnInstallSelected)
 
 # ============================================================
@@ -778,7 +820,7 @@ $flowUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
 $flowUninstall.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
 $flowUninstall.AutoScroll = $true
 $flowUninstall.WrapContents = $false
-$flowUninstall.Padding = New-Object System.Windows.Forms.Padding(10)
+$flowUninstall.Padding = New-Object System.Windows.Forms.Padding(15)
 $tabUninstall.Controls.Add($flowUninstall)
 
 $lblUninstallInfo = New-Object System.Windows.Forms.Label
@@ -786,16 +828,27 @@ $lblUninstallInfo.Text = "Atualize a lista e selecione o que deseja remover:"
 $lblUninstallInfo.Font = $FontNormal
 $lblUninstallInfo.ForeColor = $ColorMuted
 $lblUninstallInfo.AutoSize = $true
-$lblUninstallInfo.Margin = New-Object System.Windows.Forms.Padding(3, 3, 3, 0)
 $flowUninstall.Controls.Add($lblUninstallInfo)
 
 $clbUninstall = New-Object System.Windows.Forms.CheckedListBox
 $clbUninstall.CheckOnClick = $true
 $clbUninstall.Font = $FontNormal
-$clbUninstall.Height = 250
-$clbUninstall.Width = 350
-$clbUninstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
+$clbUninstall.Height = 300
+$clbUninstall.Width = 450
+$clbUninstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 10)
 $flowUninstall.Controls.Add($clbUninstall)
+
+$panelUninstallButtons = New-Object System.Windows.Forms.Panel
+$panelUninstallButtons.AutoSize = $true
+$panelUninstallButtons.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+$flowUninstall.Controls.Add($panelUninstallButtons)
+
+$flowUninstallButtons = New-Object System.Windows.Forms.FlowLayoutPanel
+$flowUninstallButtons.Dock = [System.Windows.Forms.DockStyle]::Fill
+$flowUninstallButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+$flowUninstallButtons.WrapContents = $true
+$flowUninstallButtons.Padding = New-Object System.Windows.Forms.Padding(0, 5, 0, 5)
+$panelUninstallButtons.Controls.Add($flowUninstallButtons)
 
 $btnRefreshInstalled = New-Object System.Windows.Forms.Button
 $btnRefreshInstalled.Text = "Atualizar lista"
@@ -803,9 +856,8 @@ $btnRefreshInstalled.Font = $FontButton
 $btnRefreshInstalled.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnRefreshInstalled.FlatAppearance.BorderColor = $ColorBorder
 $btnRefreshInstalled.BackColor = $ColorSurface
-$btnRefreshInstalled.AutoSize = $true
-$btnRefreshInstalled.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 0)
-$flowUninstall.Controls.Add($btnRefreshInstalled)
+$btnRefreshInstalled.Size = New-Object System.Drawing.Size(120, 30)
+$flowUninstallButtons.Controls.Add($btnRefreshInstalled)
 
 $btnUninstallSelected = New-Object System.Windows.Forms.Button
 $btnUninstallSelected.Text = "Desinstalar"
@@ -814,22 +866,24 @@ $btnUninstallSelected.BackColor = $ColorDanger
 $btnUninstallSelected.ForeColor = [System.Drawing.Color]::White
 $btnUninstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnUninstallSelected.FlatAppearance.BorderSize = 0
-$btnUninstallSelected.AutoSize = $true
-$btnUninstallSelected.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
-$flowUninstall.Controls.Add($btnUninstallSelected)
+$btnUninstallSelected.Size = New-Object System.Drawing.Size(120, 30)
+$btnUninstallSelected.Margin = New-Object System.Windows.Forms.Padding(10, 0, 0, 0)
+$flowUninstallButtons.Controls.Add($btnUninstallSelected)
 
+# Botão "Ativar Windows" centralizado
 $btnCustom = New-Object System.Windows.Forms.Button
 $btnCustom.Text = $CustomScriptLabel
 $btnCustom.Font = $FontButton
 $btnCustom.BackColor = $ColorSurface
 $btnCustom.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnCustom.FlatAppearance.BorderColor = $ColorBorder
-$btnCustom.AutoSize = $true
-$btnCustom.Margin = New-Object System.Windows.Forms.Padding(3, 8, 3, 3)
+$btnCustom.Size = New-Object System.Drawing.Size(250, 30)
+$btnCustom.Anchor = [System.Windows.Forms.AnchorStyles]::Left
+$btnCustom.Margin = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
 $flowUninstall.Controls.Add($btnCustom)
 
 # ============================================================
-#  ABA 4: SITEF
+#  ABA 4: SITEF (com botões em 2 colunas)
 # ============================================================
 $tabSitef = New-Object System.Windows.Forms.TabPage
 $tabSitef.Text = "SITEF"
@@ -841,15 +895,15 @@ $flowSitef.Dock = [System.Windows.Forms.DockStyle]::Fill
 $flowSitef.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
 $flowSitef.AutoScroll = $true
 $flowSitef.WrapContents = $false
-$flowSitef.Padding = New-Object System.Windows.Forms.Padding(10)
+$flowSitef.Padding = New-Object System.Windows.Forms.Padding(15)
 $tabSitef.Controls.Add($flowSitef)
 
+# Título e descrição
 $lblSitefTitle = New-Object System.Windows.Forms.Label
 $lblSitefTitle.Text = "Instalação do Ambiente SITEF"
 $lblSitefTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
 $lblSitefTitle.ForeColor = $ColorText
 $lblSitefTitle.AutoSize = $true
-$lblSitefTitle.Margin = New-Object System.Windows.Forms.Padding(3, 3, 3, 5)
 $flowSitef.Controls.Add($lblSitefTitle)
 
 $lblSitefDesc = New-Object System.Windows.Forms.Label
@@ -861,41 +915,59 @@ $lblSitefDesc.Text = "Esta etapa irá baixar, extrair e executar os instaladores
 $lblSitefDesc.Font = $FontNormal
 $lblSitefDesc.ForeColor = $ColorMuted
 $lblSitefDesc.AutoSize = $true
-$lblSitefDesc.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 10)
+$lblSitefDesc.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 15)
 $flowSitef.Controls.Add($lblSitefDesc)
+
+# Painel com TableLayout para botões (2 colunas)
+$panelSitefButtons = New-Object System.Windows.Forms.Panel
+$panelSitefButtons.AutoSize = $true
+$panelSitefButtons.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+$panelSitefButtons.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 10)
+$flowSitef.Controls.Add($panelSitefButtons)
+
+$tableSitefButtons = New-Object System.Windows.Forms.TableLayoutPanel
+$tableSitefButtons.Dock = [System.Windows.Forms.DockStyle]::Fill
+$tableSitefButtons.ColumnCount = 2
+$tableSitefButtons.RowCount = 2
+$tableSitefButtons.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)))
+$tableSitefButtons.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)))
+$tableSitefButtons.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$tableSitefButtons.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$tableSitefButtons.Padding = New-Object System.Windows.Forms.Padding(5)
+$panelSitefButtons.Controls.Add($tableSitefButtons)
 
 $btnSitefInstall = New-Object System.Windows.Forms.Button
 $btnSitefInstall.Text = "Instalar SITEF"
-$btnSitefInstall.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+$btnSitefInstall.Font = $FontButtonBold
 $btnSitefInstall.BackColor = $ColorPrimary
 $btnSitefInstall.ForeColor = [System.Drawing.Color]::White
 $btnSitefInstall.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnSitefInstall.FlatAppearance.BorderSize = 0
-$btnSitefInstall.AutoSize = $true
-$btnSitefInstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
-$flowSitef.Controls.Add($btnSitefInstall)
+$btnSitefInstall.Size = New-Object System.Drawing.Size(180, 35)
+$btnSitefInstall.Margin = New-Object System.Windows.Forms.Padding(5)
+$tableSitefButtons.Controls.Add($btnSitefInstall, 0, 0)
 
 $btnDllFly = New-Object System.Windows.Forms.Button
 $btnDllFly.Text = "DLL_FLY"
-$btnDllFly.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+$btnDllFly.Font = $FontButtonBold
 $btnDllFly.BackColor = $ColorPrimary
 $btnDllFly.ForeColor = [System.Drawing.Color]::White
 $btnDllFly.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnDllFly.FlatAppearance.BorderSize = 0
-$btnDllFly.AutoSize = $true
-$btnDllFly.Margin = New-Object System.Windows.Forms.Padding(3, 5, 3, 5)
-$flowSitef.Controls.Add($btnDllFly)
+$btnDllFly.Size = New-Object System.Drawing.Size(180, 35)
+$btnDllFly.Margin = New-Object System.Windows.Forms.Padding(5)
+$tableSitefButtons.Controls.Add($btnDllFly, 1, 0)
 
 $btnDllFlyEmbarcado = New-Object System.Windows.Forms.Button
 $btnDllFlyEmbarcado.Text = "DLL_FLY_EMBARCADO"
-$btnDllFlyEmbarcado.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+$btnDllFlyEmbarcado.Font = $FontButtonBold
 $btnDllFlyEmbarcado.BackColor = $ColorPrimary
 $btnDllFlyEmbarcado.ForeColor = [System.Drawing.Color]::White
 $btnDllFlyEmbarcado.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnDllFlyEmbarcado.FlatAppearance.BorderSize = 0
-$btnDllFlyEmbarcado.AutoSize = $true
-$btnDllFlyEmbarcado.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 10)
-$flowSitef.Controls.Add($btnDllFlyEmbarcado)
+$btnDllFlyEmbarcado.Size = New-Object System.Drawing.Size(180, 35)
+$btnDllFlyEmbarcado.Margin = New-Object System.Windows.Forms.Padding(5)
+$tableSitefButtons.Controls.Add($btnDllFlyEmbarcado, 0, 1)
 
 $btnSitefOpenFolder = New-Object System.Windows.Forms.Button
 $btnSitefOpenFolder.Text = "Abrir pasta C:\SITEF"
@@ -903,36 +975,37 @@ $btnSitefOpenFolder.Font = $FontButton
 $btnSitefOpenFolder.BackColor = $ColorSurface
 $btnSitefOpenFolder.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnSitefOpenFolder.FlatAppearance.BorderColor = $ColorBorder
-$btnSitefOpenFolder.AutoSize = $true
-$btnSitefOpenFolder.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 10)
-$flowSitef.Controls.Add($btnSitefOpenFolder)
+$btnSitefOpenFolder.Size = New-Object System.Drawing.Size(180, 35)
+$btnSitefOpenFolder.Margin = New-Object System.Windows.Forms.Padding(5)
+$tableSitefButtons.Controls.Add($btnSitefOpenFolder, 1, 1)
 
+# Progresso e log
 $progressSitef = New-Object System.Windows.Forms.ProgressBar
 $progressSitef.Height = 20
-$progressSitef.Width = 500
+$progressSitef.Width = 600
 $progressSitef.Minimum = 0
 $progressSitef.Maximum = 100
-$progressSitef.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
+$progressSitef.Margin = New-Object System.Windows.Forms.Padding(0, 10, 0, 5)
 $flowSitef.Controls.Add($progressSitef)
 
-$lblSitefLog = New-Object System.Windows.Forms.Label
-$lblSitefLog.Text = "Log da instalação SITEF:"
-$lblSitefLog.Font = $FontNormal
-$lblSitefLog.ForeColor = $ColorMuted
-$lblSitefLog.AutoSize = $true
-$lblSitefLog.Margin = New-Object System.Windows.Forms.Padding(3, 5, 3, 0)
-$flowSitef.Controls.Add($lblSitefLog)
+$grpSitefLog = New-Object System.Windows.Forms.GroupBox
+$grpSitefLog.Text = "Log da instalação SITEF"
+$grpSitefLog.Font = $FontHeader
+$grpSitefLog.ForeColor = $ColorText
+$grpSitefLog.AutoSize = $true
+$grpSitefLog.Padding = New-Object System.Windows.Forms.Padding(10)
+$flowSitef.Controls.Add($grpSitefLog)
 
 $txtSitefLog = New-Object System.Windows.Forms.TextBox
 $txtSitefLog.Multiline = $true
 $txtSitefLog.ScrollBars = "Vertical"
 $txtSitefLog.ReadOnly = $true
 $txtSitefLog.Height = 200
-$txtSitefLog.Width = 600
+$txtSitefLog.Width = 650
 $txtSitefLog.Font = New-Object System.Drawing.Font("Consolas", 8)
 $txtSitefLog.BackColor = [System.Drawing.Color]::White
-$txtSitefLog.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 3)
-$flowSitef.Controls.Add($txtSitefLog)
+$txtSitefLog.Margin = New-Object System.Windows.Forms.Padding(3)
+$grpSitefLog.Controls.Add($txtSitefLog)
 
 # ============================================================
 #  STATUS
@@ -961,7 +1034,7 @@ $grpStatus.Controls.Add($flowStatus)
 
 $progressBar = New-Object System.Windows.Forms.ProgressBar
 $progressBar.Height = 20
-$progressBar.Width = 500
+$progressBar.Width = 550
 $progressBar.Minimum = 0
 $flowStatus.Controls.Add($progressBar)
 
@@ -976,8 +1049,8 @@ $txtLog = New-Object System.Windows.Forms.TextBox
 $txtLog.Multiline = $true
 $txtLog.ScrollBars = "Vertical"
 $txtLog.ReadOnly = $true
-$txtLog.Height = 60
-$txtLog.Width = 500
+$txtLog.Height = 70
+$txtLog.Width = 550
 $txtLog.Font = New-Object System.Drawing.Font("Consolas", 8)
 $txtLog.BackColor = [System.Drawing.Color]::White
 $flowStatus.Controls.Add($txtLog)
@@ -1005,9 +1078,8 @@ $script:SitefLogDelegate = {
 }
 
 # ============================================================
-#  EVENTOS DOS BOTÕES
+#  EVENTOS DOS BOTÕES (MANTIDOS)
 # ============================================================
-
 $btnRun.Add_Click({
     $btnRun.Enabled = $false
     $btnSelAll.Enabled = $false
