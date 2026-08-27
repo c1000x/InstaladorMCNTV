@@ -3,33 +3,12 @@
     MCNTV Installer
     Interface com abas:
       1. Configuração do Sistema
-      2. Instalar Aplicativos
+      2. Instalar Aplicativos (Layout 1)
       3. Gerenciar Aplicativos
       4. Ativar Windows
       5. SITEF
 
-    Correções principais:
-      - $steps criado antes de ser utilizado
-      - $txtLog criado
-      - $progressBar criado
-      - $lblStatus criado
-      - Layout das abas corrigido
-      - Layout SITEF corrigido
-      - Eventos dos botões corrigidos
-      - Tratamento de erros melhorado
-      - Instalação de aplicativos sem passar delegate para Start-Job
-      - Pesquisa de aplicativos preservando seleção
-      - Verificação de sucesso/erro das etapas
-      - Logs centralizados
-      - Ativação direcionada para as configurações oficiais do Windows
-      - Log em tempo real na aba de instalação
-      - Verificação de instalação prévia (winget/choco)
-      - Controle de concorrência (máx 3 jobs)
-      - Desinstalação via winget/choco quando aplicável
-      - Timeout e tratamento de rede nos downloads
-      - Correção de sintaxe para compatibilidade com irm | iex
-      - Correção de RowStyle/ColumnStyle reutilizados
-      - Botão "Ativar Windows" agora abre URL personalizável
+    Layout 1: categorias de aplicativos, lista com checkboxes, rodapé com versão/status.
 #>
 
 # ============================================================
@@ -106,26 +85,28 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 # CONFIGURAÇÕES
 # ============================================================
 
-$ChocoApps = @(
-    "googlechrome"
+# Definição dos aplicativos com categoria
+$AppsWithCategories = @(
+    @{ Id = "googlechrome"; Manager = "choco"; Nome = "Google Chrome"; Categoria = "Navegadores" },
+    @{ Id = "AnyDesk.AnyDesk"; Manager = "winget"; Nome = "AnyDesk"; Categoria = "Ferramentas" },
+    @{ Id = "Adobe.Acrobat.Reader.64-bit"; Manager = "winget"; Nome = "Adobe Reader DC"; Categoria = "Essenciais" },
+    @{ Id = "Oracle.JavaRuntimeEnvironment"; Manager = "winget"; Nome = "Java (Runtime)"; Categoria = "Desenvolvimento" },
+    @{ Id = "Mozilla.Firefox.pt-BR"; Manager = "winget"; Nome = "Mozilla Firefox"; Categoria = "Navegadores" },
+    @{ Id = "7zip.7zip"; Manager = "winget"; Nome = "7-Zip"; Categoria = "Ferramentas" },
+    @{ Id = "Microsoft.Office"; Manager = "winget"; Nome = "Microsoft Office"; Categoria = "Essenciais" },
+    @{ Id = "9WZDNCRFJBMP"; Manager = "wingetStore"; Nome = "Windows Store App"; Categoria = "Outros" }
 )
 
-$WingetApps = @(
-    "AnyDesk.AnyDesk",
-    "Adobe.Acrobat.Reader.64-bit",
-    "Oracle.JavaRuntimeEnvironment",
-    "Mozilla.Firefox.pt-BR",
-    "7zip.7zip",
-    "Microsoft.Office"
-)
-
-$WingetStoreApps = @(
-    "9WZDNCRFJBMP"
-)
+# Extrai listas para compatibilidade com funções existentes
+$ChocoApps = $AppsWithCategories | Where-Object { $_.Manager -eq "choco" } | ForEach-Object { $_.Id }
+$WingetApps = $AppsWithCategories | Where-Object { $_.Manager -eq "winget" } | ForEach-Object { $_.Id }
+$WingetStoreApps = $AppsWithCategories | Where-Object { $_.Manager -eq "wingetStore" } | ForEach-Object { $_.Id }
 
 # URL que será aberta pelo botão "ABRIR ATIVAÇÃO DO WINDOWS"
-# Altere para o link desejado
-$ActivationUrl = "irm https://get.activated.win | iex"  # Exemplo
+$ActivationUrl = "https://www.microsoft.com/pt-br/software-download/windows11"
+
+# Versão do instalador
+$InstallerVersion = "2.6"
 
 # ============================================================
 # DIRETÓRIOS DE LOG
@@ -461,25 +442,26 @@ $UncheckedByDefault = @(
 )
 
 # ============================================================
-# CATÁLOGO DE PROGRAMAS
+# CATÁLOGO DE PROGRAMAS (com categorias)
 # ============================================================
 
 function Build-AppCatalogLabels {
     $script:AppCatalogMap = @{}
     $labels = New-Object System.Collections.ArrayList
-    foreach ($id in $ChocoApps) {
-        $label = "[Choco] $id"
-        $script:AppCatalogMap[$label] = @{ Manager = "choco"; Id = $id }
-        [void]$labels.Add($label)
-    }
-    foreach ($id in $WingetApps) {
-        $label = "[Winget] $id"
-        $script:AppCatalogMap[$label] = @{ Manager = "winget"; Id = $id }
-        [void]$labels.Add($label)
-    }
-    foreach ($id in $WingetStoreApps) {
-        $label = "[Store] $id"
-        $script:AppCatalogMap[$label] = @{ Manager = "wingetStore"; Id = $id }
+
+    foreach ($app in $AppsWithCategories) {
+        $id = $app.Id
+        $manager = $app.Manager
+        $nome = $app.Nome
+        $categoria = $app.Categoria
+
+        $label = "[$manager] $nome"
+        $script:AppCatalogMap[$label] = @{
+            Manager = $manager
+            Id = $id
+            Nome = $nome
+            Categoria = $categoria
+        }
         [void]$labels.Add($label)
     }
     return $labels
@@ -822,7 +804,7 @@ $FontButtonBold = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
 # ============================================================
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "MCNTV Installer - Provisionamento Windows"
+$form.Text = "MCN TV Instalador"
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
 $form.MaximizeBox = $true
@@ -836,13 +818,17 @@ $mainPanel = New-Object System.Windows.Forms.Panel
 $mainPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
 $form.Controls.Add($mainPanel)
 
+# ============================================================
+# TABCONTROL
+# ============================================================
+
 $tabControl = New-Object System.Windows.Forms.TabControl
 $tabControl.Dock = [System.Windows.Forms.DockStyle]::Fill
 $tabControl.Font = $FontNormal
 $mainPanel.Controls.Add($tabControl)
 
 # ============================================================
-# ABA CONFIGURAÇÃO
+# ABA CONFIGURAÇÃO (inalterada)
 # ============================================================
 
 $tabConfig = New-Object System.Windows.Forms.TabPage
@@ -911,7 +897,6 @@ $chkDryRun.Margin = New-Object System.Windows.Forms.Padding(5,10,5,5)
 $tableCheck.Controls.Add($chkDryRun, 0, $row)
 $tableCheck.SetColumnSpan($chkDryRun, 2)
 
-# Status e progresso
 $panelConfigStatus = New-Object System.Windows.Forms.Panel
 $panelConfigStatus.Dock = [System.Windows.Forms.DockStyle]::Fill
 $panelConfigStatus.Height = 55
@@ -934,7 +919,6 @@ $progressBar.Height = 20
 $progressBar.Location = New-Object System.Drawing.Point(5,27)
 $panelConfigStatus.Controls.Add($progressBar)
 
-# LOG DA CONFIGURAÇÃO
 $txtConfigLog = New-Object System.Windows.Forms.TextBox
 $txtConfigLog.Multiline = $true
 $txtConfigLog.ReadOnly = $true
@@ -981,7 +965,7 @@ $btnRun.Margin = New-Object System.Windows.Forms.Padding(20,0,0,0)
 $panelButtonsConfig.Controls.Add($btnRun)
 
 # ============================================================
-# ABA INSTALAR APLICATIVOS
+# ABA INSTALAR APLICATIVOS (NOVO LAYOUT 1)
 # ============================================================
 
 $tabInstall = New-Object System.Windows.Forms.TabPage
@@ -989,67 +973,225 @@ $tabInstall.Text = "Instalar Aplicativos"
 $tabInstall.BackColor = $ColorBackground
 $tabControl.Controls.Add($tabInstall)
 
-$tableInstall = New-Object System.Windows.Forms.TableLayoutPanel
-$tableInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
-$tableInstall.ColumnCount = 1
-$tableInstall.RowCount = 4
-$tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 60)))
-$tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 40)))
-$tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableInstall.Padding = New-Object System.Windows.Forms.Padding(10)
-$tabInstall.Controls.Add($tableInstall)
+# Painel principal com TableLayoutPanel
+$mainInstallLayout = New-Object System.Windows.Forms.TableLayoutPanel
+$mainInstallLayout.Dock = [System.Windows.Forms.DockStyle]::Fill
+$mainInstallLayout.ColumnCount = 1
+$mainInstallLayout.RowCount = 5
+$mainInstallLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))  # Título
+$mainInstallLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))  # Categorias
+$mainInstallLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))  # Barra de pesquisa
+$mainInstallLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100))) # Lista
+$mainInstallLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))  # Botões + rodapé
+$mainInstallLayout.Padding = New-Object System.Windows.Forms.Padding(15)
+$tabInstall.Controls.Add($mainInstallLayout)
 
+# Título
 $lblInstallTitle = New-Object System.Windows.Forms.Label
-$lblInstallTitle.Text = "Instalar Aplicativos"
-$lblInstallTitle.Font = $FontTitle
+$lblInstallTitle.Text = "INSTALAR APLICATIVOS"
+$lblInstallTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 14)
+$lblInstallTitle.ForeColor = $ColorText
 $lblInstallTitle.AutoSize = $true
-$tableInstall.Controls.Add($lblInstallTitle, 0, 0)
+$mainInstallLayout.Controls.Add($lblInstallTitle, 0, 0)
 
-$panelInstallList = New-Object System.Windows.Forms.Panel
-$panelInstallList.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelInstallList.AutoScroll = $true
-$tableInstall.Controls.Add($panelInstallList, 0, 1)
+# Painel de categorias (FlowLayoutPanel com botões)
+$categoryPanel = New-Object System.Windows.Forms.FlowLayoutPanel
+$categoryPanel.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+$categoryPanel.WrapContents = $true
+$categoryPanel.AutoSize = $true
+$categoryPanel.Margin = New-Object System.Windows.Forms.Padding(0,5,0,5)
+$mainInstallLayout.Controls.Add($categoryPanel, 0, 1)
 
-$grpInstall = New-Object System.Windows.Forms.GroupBox
-$grpInstall.Text = "Aplicativos disponíveis"
-$grpInstall.Font = $FontHeader
-$grpInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
-$grpInstall.Padding = New-Object System.Windows.Forms.Padding(10)
-$panelInstallList.Controls.Add($grpInstall)
+# Lista de categorias e aplicativos correspondentes
+$allCategories = @("Todos", "Essenciais", "Navegadores", "Multimídia", "Ferramentas", "Desenvolvimento", "Outros")
+$categoryButtons = @{}
+$selectedCategory = "Todos"
+
+# Função para criar botões de categoria
+foreach ($cat in $allCategories) {
+    $btn = New-Object System.Windows.Forms.Button
+    $btn.Text = $cat
+    $btn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btn.FlatAppearance.BorderColor = $ColorBorder
+    $btn.BackColor = $ColorSurface
+    $btn.Size = New-Object System.Drawing.Size(100, 28)
+    $btn.Font = $FontNormal
+    $btn.Tag = $cat
+    $categoryPanel.Controls.Add($btn)
+    $categoryButtons[$cat] = $btn
+}
+
+# Destacar o botão "Todos" inicialmente
+$categoryButtons["Todos"].BackColor = $ColorPrimary
+$categoryButtons["Todos"].ForeColor = [System.Drawing.Color]::White
+
+# Barra de pesquisa (opcional) - manter
+$searchPanel = New-Object System.Windows.Forms.Panel
+$searchPanel.AutoSize = $true
+$searchPanel.Height = 30
+$mainInstallLayout.Controls.Add($searchPanel, 0, 2)
+
+$lblSearchInstall = New-Object System.Windows.Forms.Label
+$lblSearchInstall.Text = "Buscar:"
+$lblSearchInstall.AutoSize = $true
+$lblSearchInstall.Location = New-Object System.Drawing.Point(0, 5)
+$searchPanel.Controls.Add($lblSearchInstall)
 
 $txtSearchInstall = New-Object System.Windows.Forms.TextBox
-$txtSearchInstall.Width = 400
+$txtSearchInstall.Width = 250
 $txtSearchInstall.Height = 25
-$txtSearchInstall.Location = New-Object System.Drawing.Point(15,25)
-$grpInstall.Controls.Add($txtSearchInstall)
+$txtSearchInstall.Location = New-Object System.Drawing.Point(50, 2)
+$searchPanel.Controls.Add($txtSearchInstall)
 
-$lblSearch = New-Object System.Windows.Forms.Label
-$lblSearch.Text = "Buscar aplicativo:"
-$lblSearch.AutoSize = $true
-$lblSearch.Location = New-Object System.Drawing.Point(420,28)
-$grpInstall.Controls.Add($lblSearch)
-
+# Lista de aplicativos (CheckedListBox)
 $clbInstall = New-Object System.Windows.Forms.CheckedListBox
 $clbInstall.CheckOnClick = $true
 $clbInstall.Font = $FontNormal
-$clbInstall.Location = New-Object System.Drawing.Point(15,60)
-$clbInstall.Size = New-Object System.Drawing.Size(600,350)
+$clbInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
+$clbInstall.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$clbInstall.IntegralHeight = $false
+$mainInstallLayout.Controls.Add($clbInstall, 0, 3)
+
+# Preencher a lista (todos os aplicativos)
 $allLabels = @(Build-AppCatalogLabels)
-$clbInstall.Tag = $allLabels
+$clbInstall.Tag = $allLabels   # guarda todos os labels para filtro
 foreach ($label in $allLabels) {
     [void]$clbInstall.Items.Add($label, $true)
 }
-$grpInstall.Controls.Add($clbInstall)
 
+# Painel inferior (botões + rodapé)
+$bottomPanel = New-Object System.Windows.Forms.TableLayoutPanel
+$bottomPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$bottomPanel.ColumnCount = 2
+$bottomPanel.RowCount = 2
+$bottomPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 70)))
+$bottomPanel.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 30)))
+$bottomPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$bottomPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$bottomPanel.Margin = New-Object System.Windows.Forms.Padding(0,10,0,0)
+$mainInstallLayout.Controls.Add($bottomPanel, 0, 4)
+
+# Botões de seleção/instalação (coluna 0)
+$buttonFlow = New-Object System.Windows.Forms.FlowLayoutPanel
+$buttonFlow.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+$buttonFlow.AutoSize = $true
+$buttonFlow.WrapContents = $false
+$bottomPanel.Controls.Add($buttonFlow, 0, 0)
+
+$btnInstallSelectAll = New-Object System.Windows.Forms.Button
+$btnInstallSelectAll.Text = "SELECIONAR TODOS"
+$btnInstallSelectAll.Size = New-Object System.Drawing.Size(150, 30)
+$btnInstallSelectAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnInstallSelectAll.BackColor = $ColorSurface
+$btnInstallSelectAll.FlatAppearance.BorderColor = $ColorBorder
+$buttonFlow.Controls.Add($btnInstallSelectAll)
+
+$btnInstallClearAll = New-Object System.Windows.Forms.Button
+$btnInstallClearAll.Text = "LIMPAR SELEÇÃO"
+$btnInstallClearAll.Size = New-Object System.Drawing.Size(140, 30)
+$btnInstallClearAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnInstallClearAll.BackColor = $ColorSurface
+$btnInstallClearAll.FlatAppearance.BorderColor = $ColorBorder
+$buttonFlow.Controls.Add($btnInstallClearAll)
+
+$btnInstallSelected = New-Object System.Windows.Forms.Button
+$btnInstallSelected.Text = "INSTALAR SELECIONADOS"
+$btnInstallSelected.Size = New-Object System.Drawing.Size(180, 30)
+$btnInstallSelected.Font = $FontButtonBold
+$btnInstallSelected.BackColor = $ColorSuccess
+$btnInstallSelected.ForeColor = [System.Drawing.Color]::White
+$btnInstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnInstallSelected.FlatAppearance.BorderSize = 0
+$buttonFlow.Controls.Add($btnInstallSelected)
+
+# Rodapé com versão e status (coluna 1)
+$footerPanel = New-Object System.Windows.Forms.FlowLayoutPanel
+$footerPanel.FlowDirection = [System.Windows.Forms.FlowDirection]::RightToLeft
+$footerPanel.AutoSize = $true
+$footerPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$bottomPanel.Controls.Add($footerPanel, 1, 0)
+
+$lblVersion = New-Object System.Windows.Forms.Label
+$lblVersion.Text = "Versão: $InstallerVersion"
+$lblVersion.Font = $FontSmall
+$lblVersion.ForeColor = $ColorMuted
+$lblVersion.AutoSize = $true
+$footerPanel.Controls.Add($lblVersion)
+
+$lblStatusOnline = New-Object System.Windows.Forms.Label
+$lblStatusOnline.Text = "  Online"
+$lblStatusOnline.Font = $FontSmall
+$lblStatusOnline.ForeColor = [System.Drawing.Color]::Green
+$lblStatusOnline.AutoSize = $true
+$footerPanel.Controls.Add($lblStatusOnline)
+
+# Segunda linha do bottomPanel (pode ser vazia ou para log de instalação)
+$installLogPanel = New-Object System.Windows.Forms.Panel
+$installLogPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$installLogPanel.Height = 80
+$bottomPanel.SetRowSpan($installLogPanel, 2)
+$bottomPanel.Controls.Add($installLogPanel, 0, 1)
+$bottomPanel.SetColumnSpan($installLogPanel, 2)
+
+$txtInstallLog = New-Object System.Windows.Forms.TextBox
+$txtInstallLog.Multiline = $true
+$txtInstallLog.ReadOnly = $true
+$txtInstallLog.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+$txtInstallLog.Dock = [System.Windows.Forms.DockStyle]::Fill
+$txtInstallLog.Font = New-Object System.Drawing.Font("Consolas", 8)
+$txtInstallLog.BackColor = [System.Drawing.Color]::WhiteSmoke
+$installLogPanel.Controls.Add($txtInstallLog)
+
+# ============================================================
+# EVENTOS DA ABA DE INSTALAÇÃO
+# ============================================================
+
+# Filtro por categoria
+foreach ($cat in $allCategories) {
+    $categoryButtons[$cat].Add_Click({
+        $categoria = $this.Tag
+        # Atualizar cores dos botões
+        foreach ($b in $categoryButtons.Values) {
+            $b.BackColor = $ColorSurface
+            $b.ForeColor = $ColorText
+        }
+        $this.BackColor = $ColorPrimary
+        $this.ForeColor = [System.Drawing.Color]::White
+
+        $selectedCategory = $categoria
+
+        # Filtrar a lista
+        $clbInstall.BeginUpdate()
+        try {
+            $clbInstall.Items.Clear()
+            $allLabels = $clbInstall.Tag
+            foreach ($label in $allLabels) {
+                $info = $script:AppCatalogMap[$label]
+                if ($categoria -eq "Todos" -or $info.Categoria -eq $categoria) {
+                    [void]$clbInstall.Items.Add($label, $true)
+                }
+            }
+        } finally {
+            $clbInstall.EndUpdate()
+        }
+    })
+}
+
+# Barra de pesquisa (filtra sobre os itens atuais)
 $txtSearchInstall.Add_TextChanged({
     $search = $txtSearchInstall.Text.Trim().ToLower()
     $clbInstall.BeginUpdate()
     try {
         $clbInstall.Items.Clear()
-        foreach ($item in $clbInstall.Tag) {
-            if ([string]::IsNullOrEmpty($search) -or $item.ToLower().Contains($search)) {
-                [void]$clbInstall.Items.Add($item, $true)
+        $allLabels = $clbInstall.Tag
+        # Se a categoria atual for "Todos", mostra todos; senão, filtra pela categoria atual
+        $catAtual = $selectedCategory
+        foreach ($label in $allLabels) {
+            $info = $script:AppCatalogMap[$label]
+            $matchCat = ($catAtual -eq "Todos" -or $info.Categoria -eq $catAtual)
+            $matchSearch = [string]::IsNullOrEmpty($search) -or $info.Nome.ToLower().Contains($search) -or $label.ToLower().Contains($search)
+            if ($matchCat -and $matchSearch) {
+                [void]$clbInstall.Items.Add($label, $true)
             }
         }
     } finally {
@@ -1057,34 +1199,137 @@ $txtSearchInstall.Add_TextChanged({
     }
 })
 
-# LOG DE INSTALAÇÃO EM TEMPO REAL
-$txtInstallLog = New-Object System.Windows.Forms.TextBox
-$txtInstallLog.Multiline = $true
-$txtInstallLog.ReadOnly = $true
-$txtInstallLog.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
-$txtInstallLog.Dock = [System.Windows.Forms.DockStyle]::Fill
-$txtInstallLog.Font = New-Object System.Drawing.Font("Consolas", 9)
-$txtInstallLog.BackColor = [System.Drawing.Color]::WhiteSmoke
-$tableInstall.Controls.Add($txtInstallLog, 0, 2)
+# Selecionar todos
+$btnInstallSelectAll.Add_Click({
+    for ($i = 0; $i -lt $clbInstall.Items.Count; $i++) {
+        $clbInstall.SetItemChecked($i, $true)
+    }
+})
 
-$panelInstallButton = New-Object System.Windows.Forms.Panel
-$panelInstallButton.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelInstallButton.Height = 60
-$tableInstall.Controls.Add($panelInstallButton, 0, 3)
+# Limpar seleção
+$btnInstallClearAll.Add_Click({
+    for ($i = 0; $i -lt $clbInstall.Items.Count; $i++) {
+        $clbInstall.SetItemChecked($i, $false)
+    }
+})
 
-$btnInstallSelected = New-Object System.Windows.Forms.Button
-$btnInstallSelected.Text = "INSTALAR SELECIONADOS"
-$btnInstallSelected.Font = $FontButtonBold
-$btnInstallSelected.BackColor = $ColorSuccess
-$btnInstallSelected.ForeColor = [System.Drawing.Color]::White
-$btnInstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$btnInstallSelected.FlatAppearance.BorderSize = 0
-$btnInstallSelected.Size = New-Object System.Drawing.Size(260,40)
-$btnInstallSelected.Location = New-Object System.Drawing.Point(5,5)
-$panelInstallButton.Controls.Add($btnInstallSelected)
+# Instalar selecionados (mesma lógica anterior, adaptada para usar o log $txtInstallLog)
+$btnInstallSelected.Add_Click({
+    $selectedLabels = @($clbInstall.CheckedItems)
+    if ($selectedLabels.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("Selecione ao menos um aplicativo.", "Aviso")
+        return
+    }
+    $btnInstallSelected.Enabled = $false
+    Write-InstallLog ""
+    Write-InstallLog "== INSTALAÇÃO DE APLICATIVOS =="
+    Write-InstallLog "Total: $($selectedLabels.Count)"
+    $totalJobs = 0; $completed = 0; $maxConcurrent = 3
+    $results = @{}
+    try {
+        $needsChoco = @($selectedLabels | Where-Object { $script:AppCatalogMap[$_].Manager -eq "choco" })
+        if ($needsChoco.Count -gt 0) {
+            if (-not (Ensure-ChocoAvailable -Log $AppendLog)) {
+                Write-InstallLog "Chocolatey não está disponível."
+                $btnInstallSelected.Enabled = $true
+                return
+            }
+        }
+        $toInstall = @()
+        foreach ($label in $selectedLabels) {
+            $info = $script:AppCatalogMap[$label]
+            if (-not $info) { continue }
+            $manager = $info.Manager; $id = $info.Id
+            $alreadyInstalled = $false
+            if ($manager -eq "winget" -or $manager -eq "wingetStore") {
+                $alreadyInstalled = Is-WingetPackageInstalled -id $id
+            } elseif ($manager -eq "choco") {
+                $alreadyInstalled = Is-ChocoPackageInstalled -id $id
+            }
+            if ($alreadyInstalled) {
+                Write-InstallLog "$label já está instalado. Pulando."
+            } else {
+                $toInstall += @{ Label = $label; Info = $info }
+            }
+        }
+        if ($toInstall.Count -eq 0) {
+            Write-InstallLog "Nenhum novo aplicativo para instalar."
+            $btnInstallSelected.Enabled = $true
+            return
+        }
+        Write-InstallLog "Instalando $($toInstall.Count) aplicativos..."
+        $totalJobs = $toInstall.Count
+        $progressBar.Minimum = 0; $progressBar.Maximum = 100; $progressBar.Value = 0
+        $jobQueue = [System.Collections.Queue]::new($toInstall)
+        $runningJobs = @()
+        while ($jobQueue.Count -gt 0 -or $runningJobs.Count -gt 0) {
+            while ($runningJobs.Count -lt $maxConcurrent -and $jobQueue.Count -gt 0) {
+                $item = $jobQueue.Dequeue()
+                $info = $item.Info; $id = $info.Id; $manager = $info.Manager; $label = $item.Label
+                Write-InstallLog "Iniciando instalação de $label"
+                $jobScript = {
+                    param($manager, $id)
+                    $output = @()
+                    try {
+                        switch ($manager) {
+                            "choco" { $out = choco install $id -y --force --ignore-checksums 2>&1; $output += $out }
+                            "winget" { $out = winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent 2>&1; $output += $out }
+                            "wingetStore" { $out = winget install --id $id --source msstore --accept-source-agreements --accept-package-agreements --silent 2>&1; $output += $out }
+                        }
+                        return @{ Success = $true; Output = $output }
+                    } catch {
+                        return @{ Success = $false; Output = @("ERRO: $($_.Exception.Message)") }
+                    }
+                }
+                $job = Start-Job -ScriptBlock $jobScript -ArgumentList $manager, $id
+                $runningJobs += @{ Job = $job; Label = $label }
+            }
+            Start-Sleep -Milliseconds 500
+            $finished = $runningJobs | Where-Object { $_.Job.State -ne 'Running' }
+            foreach ($item in $finished) {
+                $job = $item.Job; $label = $item.Label
+                $result = Receive-Job -Job $job -ErrorAction SilentlyContinue
+                Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+                $completed++
+                if ($result -and $result.Success) {
+                    Write-InstallLog "$label instalado com sucesso."
+                    $results[$label] = "OK"
+                } else {
+                    Write-InstallLog "Falha na instalação de $label."
+                    $results[$label] = "FALHA"
+                }
+                $percent = [int](($completed / $totalJobs) * 100)
+                if ($percent -gt 100) { $percent = 100 }
+                $progressBar.Value = $percent
+                $lblStatus.Text = "Instalando: $completed de $totalJobs"
+                [System.Windows.Forms.Application]::DoEvents()
+            }
+            $runningJobs = $runningJobs | Where-Object { $_.Job.State -eq 'Running' }
+        }
+        $progressBar.Value = 100
+        $lblStatus.Text = "Instalação de aplicativos concluída."
+        Write-InstallLog "=== INSTALAÇÃO DE APLICATIVOS CONCLUÍDA ==="
+    } catch {
+        Write-InstallLog "ERRO geral na instalação: $($_.Exception.Message)"
+    } finally {
+        Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
+        $btnInstallSelected.Enabled = $true
+    }
+})
+
+# Função para log na aba de instalação (substitui a antiga)
+function Write-InstallLog {
+    param([string]$Message)
+    $line = "$Message`r`n"
+    $txtInstallLog.AppendText($line)
+    $txtInstallLog.SelectionStart = $txtInstallLog.Text.Length
+    $txtInstallLog.ScrollToCaret()
+    Write-LogFile "[INSTALL] $Message"
+    [System.Windows.Forms.Application]::DoEvents()
+}
 
 # ============================================================
-# ABA GERENCIAR APLICATIVOS
+# ABA GERENCIAR APLICATIVOS (inalterada)
 # ============================================================
 
 $tabUninstall = New-Object System.Windows.Forms.TabPage
@@ -1138,7 +1383,7 @@ $btnUninstallSelected.FlatAppearance.BorderSize = 0
 $panelUninstallButtons.Controls.Add($btnUninstallSelected)
 
 # ============================================================
-# ABA ATIVAR WINDOWS
+# ABA ATIVAR WINDOWS (inalterada, com link)
 # ============================================================
 
 $tabActivate = New-Object System.Windows.Forms.TabPage
@@ -1179,7 +1424,7 @@ $btnCustomActivate.Size = New-Object System.Drawing.Size(300,50)
 $flowActivate.Controls.Add($btnCustomActivate)
 
 # ============================================================
-# ABA SITEF
+# ABA SITEF (inalterada)
 # ============================================================
 
 $tabSitef = New-Object System.Windows.Forms.TabPage
@@ -1290,7 +1535,7 @@ $progressSitef.Height = 20
 $grpSitefLog.Controls.Add($progressSitef)
 
 # ============================================================
-# FUNÇÕES DE LOG
+# FUNÇÕES DE LOG COMPARTILHADAS
 # ============================================================
 
 function Write-ConfigLog {
@@ -1300,16 +1545,6 @@ function Write-ConfigLog {
     $txtConfigLog.SelectionStart = $txtConfigLog.Text.Length
     $txtConfigLog.ScrollToCaret()
     Write-LogFile $Message
-    [System.Windows.Forms.Application]::DoEvents()
-}
-
-function Write-InstallLog {
-    param([string]$Message)
-    $line = "$Message`r`n"
-    $txtInstallLog.AppendText($line)
-    $txtInstallLog.SelectionStart = $txtInstallLog.Text.Length
-    $txtInstallLog.ScrollToCaret()
-    Write-LogFile "[INSTALL] $Message"
     [System.Windows.Forms.Application]::DoEvents()
 }
 
@@ -1329,17 +1564,18 @@ $script:SitefLogDelegate = {
 }
 
 # ============================================================
-# EVENTOS DOS BOTÕES
+# EVENTOS DOS BOTÕES (CONFIGURAÇÃO, GERENCIAR, ATIVAR, SITEF)
 # ============================================================
 
+# Configuração - marcar/desmarcar todos
 $btnSelAll.Add_Click({
     foreach ($cb in $checkboxes.Values) { $cb.Checked = $true }
 })
-
 $btnSelNone.Add_Click({
     foreach ($cb in $checkboxes.Values) { $cb.Checked = $false }
 })
 
+# Configuração - executar
 $btnRun.Add_Click({
     $btnRun.Enabled = $false
     $btnSelAll.Enabled = $false
@@ -1403,117 +1639,7 @@ $btnRun.Add_Click({
     [System.Windows.Forms.MessageBox]::Show("Provisionamento concluído.`r`n`r`nRelatório:`r`n$ReportPath","Finalizado",[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Information)
 })
 
-# ============================================================
-# INSTALAR APLICATIVOS
-# ============================================================
-
-$btnInstallSelected.Add_Click({
-    $selectedLabels = @($clbInstall.CheckedItems)
-    if ($selectedLabels.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show("Selecione ao menos um aplicativo.","Aviso")
-        return
-    }
-    $btnInstallSelected.Enabled = $false
-    Write-InstallLog ""
-    Write-InstallLog "== INSTALAÇÃO DE APLICATIVOS =="
-    Write-InstallLog "Total: $($selectedLabels.Count)"
-    $totalJobs = 0; $completed = 0; $maxConcurrent = 3
-    $results = @{}
-    try {
-        $needsChoco = @($selectedLabels | Where-Object { $script:AppCatalogMap[$_].Manager -eq "choco" })
-        if ($needsChoco.Count -gt 0) {
-            if (-not (Ensure-ChocoAvailable -Log $AppendLog)) {
-                Write-InstallLog "Chocolatey não está disponível."
-                $btnInstallSelected.Enabled = $true
-                return
-            }
-        }
-        $toInstall = @()
-        foreach ($label in $selectedLabels) {
-            $info = $script:AppCatalogMap[$label]
-            if (-not $info) { continue }
-            $manager = $info.Manager; $id = $info.Id
-            $alreadyInstalled = $false
-            if ($manager -eq "winget" -or $manager -eq "wingetStore") {
-                $alreadyInstalled = Is-WingetPackageInstalled -id $id
-            } elseif ($manager -eq "choco") {
-                $alreadyInstalled = Is-ChocoPackageInstalled -id $id
-            }
-            if ($alreadyInstalled) {
-                Write-InstallLog "$label já está instalado. Pulando."
-            } else {
-                $toInstall += @{ Label = $label; Info = $info }
-            }
-        }
-        if ($toInstall.Count -eq 0) {
-            Write-InstallLog "Nenhum novo aplicativo para instalar."
-            $btnInstallSelected.Enabled = $true
-            return
-        }
-        Write-InstallLog "Instalando $($toInstall.Count) aplicativos..."
-        $totalJobs = $toInstall.Count
-        $progressBar.Minimum = 0; $progressBar.Maximum = 100; $progressBar.Value = 0
-        $jobQueue = [System.Collections.Queue]::new($toInstall)
-        $runningJobs = @()
-        while ($jobQueue.Count -gt 0 -or $runningJobs.Count -gt 0) {
-            while ($runningJobs.Count -lt $maxConcurrent -and $jobQueue.Count -gt 0) {
-                $item = $jobQueue.Dequeue()
-                $info = $item.Info; $id = $info.Id; $manager = $info.Manager; $label = $item.Label
-                Write-InstallLog "Iniciando instalação de $label"
-                $jobScript = {
-                    param($manager, $id)
-                    $output = @()
-                    try {
-                        switch ($manager) {
-                            "choco" { $out = choco install $id -y --force --ignore-checksums 2>&1; $output += $out }
-                            "winget" { $out = winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent 2>&1; $output += $out }
-                            "wingetStore" { $out = winget install --id $id --source msstore --accept-source-agreements --accept-package-agreements --silent 2>&1; $output += $out }
-                        }
-                        return @{ Success = $true; Output = $output }
-                    } catch {
-                        return @{ Success = $false; Output = @("ERRO: $($_.Exception.Message)") }
-                    }
-                }
-                $job = Start-Job -ScriptBlock $jobScript -ArgumentList $manager, $id
-                $runningJobs += @{ Job = $job; Label = $label }
-            }
-            Start-Sleep -Milliseconds 500
-            $finished = $runningJobs | Where-Object { $_.Job.State -ne 'Running' }
-            foreach ($item in $finished) {
-                $job = $item.Job; $label = $item.Label
-                $result = Receive-Job -Job $job -ErrorAction SilentlyContinue
-                Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-                $completed++
-                if ($result -and $result.Success) {
-                    Write-InstallLog "$label instalado com sucesso."
-                    $results[$label] = "OK"
-                } else {
-                    Write-InstallLog "Falha na instalação de $label."
-                    $results[$label] = "FALHA"
-                }
-                $percent = [int](($completed / $totalJobs) * 100)
-                if ($percent -gt 100) { $percent = 100 }
-                $progressBar.Value = $percent
-                $lblStatus.Text = "Instalando: $completed de $totalJobs"
-                [System.Windows.Forms.Application]::DoEvents()
-            }
-            $runningJobs = $runningJobs | Where-Object { $_.Job.State -eq 'Running' }
-        }
-        $progressBar.Value = 100
-        $lblStatus.Text = "Instalação de aplicativos concluída."
-        Write-InstallLog "=== INSTALAÇÃO DE APLICATIVOS CONCLUÍDA ==="
-    } catch {
-        Write-InstallLog "ERRO geral na instalação: $($_.Exception.Message)"
-    } finally {
-        Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
-        $btnInstallSelected.Enabled = $true
-    }
-})
-
-# ============================================================
-# GERENCIAR APLICATIVOS - ATUALIZAR LISTA
-# ============================================================
-
+# Gerenciar - atualizar lista
 $btnRefreshInstalled.Add_Click({
     $btnRefreshInstalled.Enabled = $false
     try {
@@ -1555,10 +1681,7 @@ $btnRefreshInstalled.Add_Click({
     }
 })
 
-# ============================================================
-# GERENCIAR APLICATIVOS - DESINSTALAR
-# ============================================================
-
+# Gerenciar - desinstalar
 $btnUninstallSelected.Add_Click({
     $selected = @($clbUninstall.CheckedItems)
     if ($selected.Count -eq 0) {
@@ -1600,10 +1723,7 @@ $btnUninstallSelected.Add_Click({
     }
 })
 
-# ============================================================
-# ATIVAÇÃO - ABRE LINK PERSONALIZADO
-# ============================================================
-
+# Ativar Windows - abrir link
 $btnCustomActivate.Add_Click({
     try {
         Write-ConfigLog "Abrindo link de ativação: $ActivationUrl"
@@ -1615,10 +1735,7 @@ $btnCustomActivate.Add_Click({
     }
 })
 
-# ============================================================
-# SITEF - BOTÕES
-# ============================================================
-
+# SITEF - botões
 $btnSitefInstall.Add_Click({
     if ($script:SitefBusy) { return }
     $script:SitefBusy = $true
