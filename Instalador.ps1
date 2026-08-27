@@ -1,7 +1,7 @@
 <#
     ProvisioningTool.ps1
     Interface grafica para provisionamento de maquinas Windows.
-    Layout adaptativo – ajusta-se automaticamente ao tamanho da tela.
+    Layout com TableLayoutPanel – adapta-se automaticamente ao redimensionamento da janela.
     Todas as funções e eventos incluídos.
 #>
 
@@ -66,32 +66,6 @@ $ReportPath  = Join-Path $LogsDir "relatorio_$Timestamp.txt"
 
 $script:Results = [ordered]@{}
 $script:CancelRequested = $false
-
-# ============================================================
-#  DETECTAR TAMANHO DA TELA E CALCULAR LAYOUT ADAPTATIVO
-# ============================================================
-$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$screenWidth  = $screen.Width
-$screenHeight = $screen.Height
-
-$margin     = [Math]::Max(20, [int]($screenWidth * 0.02))
-$gap        = [Math]::Max(15, [int]($screenWidth * 0.015))
-$headerHeight = 78
-$statusHeight = 210
-$tabHeight  = [Math]::Max(400, $screenHeight - $headerHeight - $statusHeight - 80)
-
-$usableWidth = $screenWidth - ($margin * 2) - ($gap * 2)
-$colWidth    = [Math]::Floor(($usableWidth) / 3)
-if ($colWidth -lt 280) { $colWidth = 280 }
-
-$formWidth  = $screenWidth - 20
-$formHeight = $screenHeight - 20
-$topY = $headerHeight
-$groupH = $tabHeight
-
-$col1X = $margin
-$col2X = $col1X + $colWidth + $gap
-$col3X = $col2X + $colWidth + $gap
 
 # ============================================================
 #  FUNCOES DE CADA ETAPA (Provisionamento)
@@ -448,7 +422,7 @@ function Install-Sitef {
 }
 
 # ============================================================
-#  INTERFACE GRAFICA (LAYOUT ADAPTATIVO)
+#  INTERFACE GRAFICA (COM TABLELAYOUTPANEL)
 # ============================================================
 $ColorBackground = [System.Drawing.Color]::FromArgb(245,247,250)
 $ColorSurface    = [System.Drawing.Color]::White
@@ -465,69 +439,104 @@ $FontHeader = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
 $FontTitle  = New-Object System.Drawing.Font("Segoe UI Semibold", 18)
 $FontButton = New-Object System.Drawing.Font("Segoe UI", 9)
 
+# Criar o formulário com tamanho inicial adequado
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "MCNTV Installer - Provisionamento Windows"
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
 $form.MaximizeBox = $true
 $form.MinimizeBox = $true
-$form.ClientSize = New-Object System.Drawing.Size($formWidth, $formHeight)
+$form.ClientSize = New-Object System.Drawing.Size(1100, 750)
 $form.BackColor = $ColorBackground
 $form.Font = $FontNormal
+$form.MinimumSize = New-Object System.Drawing.Size(800, 600)
 
-# Panel com scroll
+# Panel principal com scroll
 $mainPanel = New-Object System.Windows.Forms.Panel
 $mainPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
 $mainPanel.AutoScroll = $true
 $form.Controls.Add($mainPanel)
 
-$contentPanel = New-Object System.Windows.Forms.Panel
-$contentPanel.Size = New-Object System.Drawing.Size($formWidth, $formHeight)
-$contentPanel.Location = New-Object System.Drawing.Point(0, 0)
-$mainPanel.Controls.Add($contentPanel)
+# ============================================================
+#  CABECALHO (fixo no topo)
+# ============================================================
+$headerPanel = New-Object System.Windows.Forms.Panel
+$headerPanel.Dock = [System.Windows.Forms.DockStyle]::Top
+$headerPanel.Height = 70
+$headerPanel.BackColor = $ColorBackground
+$mainPanel.Controls.Add($headerPanel)
 
-# Cabeçalho
 $lblMainTitle = New-Object System.Windows.Forms.Label
 $lblMainTitle.Text = "MCNTV Installer"
 $lblMainTitle.Font = $FontTitle
 $lblMainTitle.ForeColor = $ColorText
-$lblMainTitle.Location = New-Object System.Drawing.Point($margin, 15)
+$lblMainTitle.Location = New-Object System.Drawing.Point(20, 10)
 $lblMainTitle.Size = New-Object System.Drawing.Size(500, 30)
-$contentPanel.Controls.Add($lblMainTitle)
+$headerPanel.Controls.Add($lblMainTitle)
 
 $lblSubtitle = New-Object System.Windows.Forms.Label
 $lblSubtitle.Text = "Instale, configure e gerencie este computador"
 $lblSubtitle.Font = $FontNormal
 $lblSubtitle.ForeColor = $ColorMuted
-$lblSubtitle.Location = New-Object System.Drawing.Point($margin, 45)
+$lblSubtitle.Location = New-Object System.Drawing.Point(20, 40)
 $lblSubtitle.Size = New-Object System.Drawing.Size(500, 22)
-$contentPanel.Controls.Add($lblSubtitle)
-
-# TabControl
-$tabControl = New-Object System.Windows.Forms.TabControl
-$tabControl.Location = New-Object System.Drawing.Point($margin, $topY)
-$tabControl.Size = New-Object System.Drawing.Size(($formWidth - $margin*2), $tabHeight)
-$tabControl.Font = $FontNormal
-$tabControl.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$contentPanel.Controls.Add($tabControl)
+$headerPanel.Controls.Add($lblSubtitle)
 
 # ============================================================
-#  ABA PROVISIONAMENTO
+#  CONTEÚDO PRINCIPAL (TabControl + Status)
+# ============================================================
+$contentPanel = New-Object System.Windows.Forms.Panel
+$contentPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
+$contentPanel.BackColor = $ColorBackground
+$mainPanel.Controls.Add($contentPanel)
+
+# TabControl (ocupa 70% da altura)
+$tabControl = New-Object System.Windows.Forms.TabControl
+$tabControl.Dock = [System.Windows.Forms.DockStyle]::Fill
+$tabControl.Font = $FontNormal
+$contentPanel.Controls.Add($tabControl)
+
+# Painel de status (altura fixa na parte inferior)
+$statusPanel = New-Object System.Windows.Forms.Panel
+$statusPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
+$statusPanel.Height = 210
+$statusPanel.BackColor = $ColorBackground
+$contentPanel.Controls.Add($statusPanel)
+
+# ============================================================
+#  ABA PROVISIONAMENTO (COM TABLELAYOUTPANEL)
 # ============================================================
 $tabProvisioning = New-Object System.Windows.Forms.TabPage
 $tabProvisioning.Text = "Provisionamento"
 $tabProvisioning.BackColor = $ColorBackground
 $tabControl.Controls.Add($tabProvisioning)
 
-# GRUPO 1: Configuração do sistema
+# TableLayoutPanel com 3 colunas iguais
+$tableLayout = New-Object System.Windows.Forms.TableLayoutPanel
+$tableLayout.Dock = [System.Windows.Forms.DockStyle]::Fill
+$tableLayout.ColumnCount = 3
+$tableLayout.RowCount = 1
+$tableLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33)))
+$tableLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.33)))
+$tableLayout.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 33.34)))
+$tableLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+$tableLayout.Padding = New-Object System.Windows.Forms.Padding(10, 10, 10, 10)
+$tableLayout.BackColor = $ColorBackground
+$tabProvisioning.Controls.Add($tableLayout)
+
+# ----- GRUPO 1: Configuração -----
 $grpSystem = New-Object System.Windows.Forms.GroupBox
 $grpSystem.Text = "1. Configuracao do sistema"
 $grpSystem.Font = $FontHeader
 $grpSystem.ForeColor = $ColorText
-$grpSystem.Location = New-Object System.Drawing.Point($col1X, 10)
-$grpSystem.Size = New-Object System.Drawing.Size($colWidth, $groupH)
-$grpSystem.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
-$tabProvisioning.Controls.Add($grpSystem)
+$grpSystem.Dock = [System.Windows.Forms.DockStyle]::Fill
+$grpSystem.Padding = New-Object System.Windows.Forms.Padding(10, 20, 10, 10)
+$tableLayout.Controls.Add($grpSystem, 0, 0)
+
+$panelSystem = New-Object System.Windows.Forms.Panel
+$panelSystem.Dock = [System.Windows.Forms.DockStyle]::Fill
+$panelSystem.AutoScroll = $true
+$grpSystem.Controls.Add($panelSystem)
 
 $steps = [ordered]@{
     "Ponto de Restauracao"                  = { param($l,$d) Step-RestorePoint -Log $l -DryRun $d }
@@ -544,93 +553,103 @@ $steps = [ordered]@{
 
 $UncheckedByDefault = @("Versoes Anteriores (Shadow Copy)")
 $checkboxes = @{}
-$y = 35
+$y = 10
 foreach ($key in $steps.Keys) {
     $cb = New-Object System.Windows.Forms.CheckBox
     $cb.Text = $key
     $cb.Checked = -not ($UncheckedByDefault -contains $key)
-    $cb.Location = New-Object System.Drawing.Point(15, $y)
-    $cb.Size = New-Object System.Drawing.Size(($colWidth - 40), 22)
+    $cb.Location = New-Object System.Drawing.Point(10, $y)
+    $cb.Size = New-Object System.Drawing.Size(350, 22)
     $cb.Font = $FontNormal
     $cb.ForeColor = $ColorText
-    $grpSystem.Controls.Add($cb)
+    $cb.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+    $panelSystem.Controls.Add($cb)
     $checkboxes[$key] = $cb
-    $y += 24
+    $y += 26
 }
 
 $chkDryRun = New-Object System.Windows.Forms.CheckBox
 $chkDryRun.Text = "Modo Simulacao (dry-run)"
-$chkDryRun.Location = New-Object System.Drawing.Point(15, ($y + 3))
-$chkDryRun.Size = New-Object System.Drawing.Size(($colWidth - 40), 22)
+$chkDryRun.Location = New-Object System.Drawing.Point(10, $y + 3)
+$chkDryRun.Size = New-Object System.Drawing.Size(350, 22)
+$chkDryRun.Font = $FontNormal
 $chkDryRun.ForeColor = [System.Drawing.Color]::DarkBlue
-$grpSystem.Controls.Add($chkDryRun)
+$chkDryRun.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$panelSystem.Controls.Add($chkDryRun)
 
 $btnSelAll = New-Object System.Windows.Forms.Button
 $btnSelAll.Text = "Marcar todos"
-$btnSelAll.Location = New-Object System.Drawing.Point(15, 305)
-$btnSelAll.Size = New-Object System.Drawing.Size(160, 30)
+$btnSelAll.Location = New-Object System.Drawing.Point(10, $y + 35)
+$btnSelAll.Size = New-Object System.Drawing.Size(150, 30)
 $btnSelAll.Font = $FontButton
 $btnSelAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnSelAll.FlatAppearance.BorderColor = $ColorBorder
 $btnSelAll.BackColor = $ColorSurface
 $btnSelAll.Add_Click({ $checkboxes.Values | ForEach-Object { $_.Checked = $true } })
-$grpSystem.Controls.Add($btnSelAll)
+$panelSystem.Controls.Add($btnSelAll)
 
 $btnSelNone = New-Object System.Windows.Forms.Button
 $btnSelNone.Text = "Desmarcar todos"
-$btnSelNone.Location = New-Object System.Drawing.Point(190, 305)
-$btnSelNone.Size = New-Object System.Drawing.Size(($colWidth - 210), 30)
+$btnSelNone.Location = New-Object System.Drawing.Point(180, $y + 35)
+$btnSelNone.Size = New-Object System.Drawing.Size(150, 30)
 $btnSelNone.Font = $FontButton
 $btnSelNone.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnSelNone.FlatAppearance.BorderColor = $ColorBorder
 $btnSelNone.BackColor = $ColorSurface
 $btnSelNone.Add_Click({ $checkboxes.Values | ForEach-Object { $_.Checked = $false } })
-$grpSystem.Controls.Add($btnSelNone)
+$panelSystem.Controls.Add($btnSelNone)
 
 $btnRun = New-Object System.Windows.Forms.Button
 $btnRun.Text = "Executar configuracao"
-$btnRun.Location = New-Object System.Drawing.Point(15, 350)
-$btnRun.Size = New-Object System.Drawing.Size(($colWidth - 30), 30)
+$btnRun.Location = New-Object System.Drawing.Point(10, $y + 80)
+$btnRun.Size = New-Object System.Drawing.Size(320, 30)
 $btnRun.Font = $FontButton
 $btnRun.BackColor = $ColorPrimary
 $btnRun.ForeColor = [System.Drawing.Color]::White
 $btnRun.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnRun.FlatAppearance.BorderSize = 0
-$grpSystem.Controls.Add($btnRun)
+$btnRun.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$panelSystem.Controls.Add($btnRun)
 
-# GRUPO 2: Instalar aplicativos
+# ----- GRUPO 2: Instalar -----
 $grpInstall = New-Object System.Windows.Forms.GroupBox
 $grpInstall.Text = "2. Instalar aplicativos"
 $grpInstall.Font = $FontHeader
 $grpInstall.ForeColor = $ColorText
-$grpInstall.Location = New-Object System.Drawing.Point($col2X, 10)
-$grpInstall.Size = New-Object System.Drawing.Size($colWidth, $groupH)
-$grpInstall.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
-$tabProvisioning.Controls.Add($grpInstall)
+$grpInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
+$grpInstall.Padding = New-Object System.Windows.Forms.Padding(10, 20, 10, 10)
+$tableLayout.Controls.Add($grpInstall, 1, 0)
+
+$panelInstall = New-Object System.Windows.Forms.Panel
+$panelInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
+$panelInstall.AutoScroll = $true
+$grpInstall.Controls.Add($panelInstall)
 
 $lblInstallInfo = New-Object System.Windows.Forms.Label
 $lblInstallInfo.Text = "Buscar:"
 $lblInstallInfo.Font = $FontNormal
 $lblInstallInfo.ForeColor = $ColorMuted
-$lblInstallInfo.Location = New-Object System.Drawing.Point(15, 32)
+$lblInstallInfo.Location = New-Object System.Drawing.Point(10, 10)
 $lblInstallInfo.Size = New-Object System.Drawing.Size(50, 22)
-$grpInstall.Controls.Add($lblInstallInfo)
+$panelInstall.Controls.Add($lblInstallInfo)
 
 $txtSearchInstall = New-Object System.Windows.Forms.TextBox
-$txtSearchInstall.Location = New-Object System.Drawing.Point(65, 32)
-$txtSearchInstall.Size = New-Object System.Drawing.Size(($colWidth - 80), 22)
+$txtSearchInstall.Location = New-Object System.Drawing.Point(60, 10)
+$txtSearchInstall.Size = New-Object System.Drawing.Size(250, 22)
 $txtSearchInstall.Font = $FontNormal
-$grpInstall.Controls.Add($txtSearchInstall)
+$txtSearchInstall.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$panelInstall.Controls.Add($txtSearchInstall)
 
 $clbInstall = New-Object System.Windows.Forms.CheckedListBox
-$clbInstall.Location = New-Object System.Drawing.Point(15, 58)
-$clbInstall.Size = New-Object System.Drawing.Size(($colWidth - 30), 265)
+$clbInstall.Location = New-Object System.Drawing.Point(10, 40)
+$clbInstall.Size = New-Object System.Drawing.Size(300, 230)
 $clbInstall.CheckOnClick = $true
 $clbInstall.Font = $FontNormal
+$clbInstall.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
 $allLabels = Build-AppCatalogLabels
 $clbInstall.Tag = $allLabels
 foreach ($label in $allLabels) { [void]$clbInstall.Items.Add($label, $true) }
-$grpInstall.Controls.Add($clbInstall)
+$panelInstall.Controls.Add($clbInstall)
 
 $txtSearchInstall.Add_TextChanged({
     $search = $txtSearchInstall.Text.Trim().ToLower()
@@ -651,70 +670,79 @@ $txtSearchInstall.Add_TextChanged({
 
 $btnInstallSelected = New-Object System.Windows.Forms.Button
 $btnInstallSelected.Text = "INSTALAR SELECIONADOS (Paralelo)"
-$btnInstallSelected.Location = New-Object System.Drawing.Point(15, 335)
-$btnInstallSelected.Size = New-Object System.Drawing.Size(($colWidth - 30), 40)
+$btnInstallSelected.Location = New-Object System.Drawing.Point(10, 275)
+$btnInstallSelected.Size = New-Object System.Drawing.Size(300, 40)
 $btnInstallSelected.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
 $btnInstallSelected.BackColor = $ColorSuccess
 $btnInstallSelected.ForeColor = [System.Drawing.Color]::White
 $btnInstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnInstallSelected.FlatAppearance.BorderSize = 0
-$grpInstall.Controls.Add($btnInstallSelected)
+$btnInstallSelected.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$panelInstall.Controls.Add($btnInstallSelected)
 
-# GRUPO 3: Gerenciar aplicativos instalados
+# ----- GRUPO 3: Remover -----
 $grpUninstall = New-Object System.Windows.Forms.GroupBox
 $grpUninstall.Text = "3. Gerenciar aplicativos instalados"
 $grpUninstall.Font = $FontHeader
 $grpUninstall.ForeColor = $ColorText
-$grpUninstall.Location = New-Object System.Drawing.Point($col3X, 10)
-$grpUninstall.Size = New-Object System.Drawing.Size($colWidth, $groupH)
-$grpUninstall.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
-$tabProvisioning.Controls.Add($grpUninstall)
+$grpUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
+$grpUninstall.Padding = New-Object System.Windows.Forms.Padding(10, 20, 10, 10)
+$tableLayout.Controls.Add($grpUninstall, 2, 0)
+
+$panelUninstall = New-Object System.Windows.Forms.Panel
+$panelUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
+$panelUninstall.AutoScroll = $true
+$grpUninstall.Controls.Add($panelUninstall)
 
 $lblUninstallInfo = New-Object System.Windows.Forms.Label
 $lblUninstallInfo.Text = "Atualize a lista e selecione o que deseja remover:"
 $lblUninstallInfo.Font = $FontNormal
 $lblUninstallInfo.ForeColor = $ColorMuted
-$lblUninstallInfo.Location = New-Object System.Drawing.Point(15, 32)
-$lblUninstallInfo.Size = New-Object System.Drawing.Size(($colWidth - 30), 22)
-$grpUninstall.Controls.Add($lblUninstallInfo)
+$lblUninstallInfo.Location = New-Object System.Drawing.Point(10, 10)
+$lblUninstallInfo.Size = New-Object System.Drawing.Size(300, 22)
+$panelUninstall.Controls.Add($lblUninstallInfo)
 
 $clbUninstall = New-Object System.Windows.Forms.CheckedListBox
-$clbUninstall.Location = New-Object System.Drawing.Point(15, 58)
-$clbUninstall.Size = New-Object System.Drawing.Size(($colWidth - 30), 245)
+$clbUninstall.Location = New-Object System.Drawing.Point(10, 38)
+$clbUninstall.Size = New-Object System.Drawing.Size(300, 205)
 $clbUninstall.CheckOnClick = $true
 $clbUninstall.Font = $FontNormal
-$grpUninstall.Controls.Add($clbUninstall)
+$clbUninstall.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+$panelUninstall.Controls.Add($clbUninstall)
 
 $btnRefreshInstalled = New-Object System.Windows.Forms.Button
 $btnRefreshInstalled.Text = "Atualizar lista"
-$btnRefreshInstalled.Location = New-Object System.Drawing.Point(15, 315)
-$btnRefreshInstalled.Size = New-Object System.Drawing.Size(($colWidth - 180), 30)
+$btnRefreshInstalled.Location = New-Object System.Drawing.Point(10, 250)
+$btnRefreshInstalled.Size = New-Object System.Drawing.Size(140, 30)
 $btnRefreshInstalled.Font = $FontButton
 $btnRefreshInstalled.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnRefreshInstalled.FlatAppearance.BorderColor = $ColorBorder
 $btnRefreshInstalled.BackColor = $ColorSurface
-$grpUninstall.Controls.Add($btnRefreshInstalled)
+$btnRefreshInstalled.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
+$panelUninstall.Controls.Add($btnRefreshInstalled)
 
 $btnUninstallSelected = New-Object System.Windows.Forms.Button
 $btnUninstallSelected.Text = "Desinstalar"
-$btnUninstallSelected.Location = New-Object System.Drawing.Point(($colWidth - 150), 315)
-$btnUninstallSelected.Size = New-Object System.Drawing.Size(135, 30)
+$btnUninstallSelected.Location = New-Object System.Drawing.Point(160, 250)
+$btnUninstallSelected.Size = New-Object System.Drawing.Size(150, 30)
 $btnUninstallSelected.Font = $FontButton
 $btnUninstallSelected.BackColor = $ColorDanger
 $btnUninstallSelected.ForeColor = [System.Drawing.Color]::White
 $btnUninstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnUninstallSelected.FlatAppearance.BorderSize = 0
-$grpUninstall.Controls.Add($btnUninstallSelected)
+$btnUninstallSelected.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$panelUninstall.Controls.Add($btnUninstallSelected)
 
 $btnCustom = New-Object System.Windows.Forms.Button
 $btnCustom.Text = $CustomScriptLabel
-$btnCustom.Location = New-Object System.Drawing.Point(15, 355)
-$btnCustom.Size = New-Object System.Drawing.Size(($colWidth - 30), 30)
+$btnCustom.Location = New-Object System.Drawing.Point(10, 288)
+$btnCustom.Size = New-Object System.Drawing.Size(300, 30)
 $btnCustom.Font = $FontButton
 $btnCustom.BackColor = $ColorSurface
 $btnCustom.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnCustom.FlatAppearance.BorderColor = $ColorBorder
-$grpUninstall.Controls.Add($btnCustom)
+$btnCustom.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$panelUninstall.Controls.Add($btnCustom)
 
 # ============================================================
 #  ABA SITEF
@@ -724,13 +752,19 @@ $tabSitef.Text = "SITEF"
 $tabSitef.BackColor = $ColorBackground
 $tabControl.Controls.Add($tabSitef)
 
+$panelSitef = New-Object System.Windows.Forms.Panel
+$panelSitef.Dock = [System.Windows.Forms.DockStyle]::Fill
+$panelSitef.AutoScroll = $true
+$panelSitef.Padding = New-Object System.Windows.Forms.Padding(20)
+$tabSitef.Controls.Add($panelSitef)
+
 $lblSitefTitle = New-Object System.Windows.Forms.Label
 $lblSitefTitle.Text = "Instalação do Ambiente SITEF"
 $lblSitefTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
 $lblSitefTitle.ForeColor = $ColorText
-$lblSitefTitle.Location = New-Object System.Drawing.Point(20, 20)
+$lblSitefTitle.Location = New-Object System.Drawing.Point(0, 0)
 $lblSitefTitle.Size = New-Object System.Drawing.Size(400, 25)
-$tabSitef.Controls.Add($lblSitefTitle)
+$panelSitef.Controls.Add($lblSitefTitle)
 
 $lblSitefDesc = New-Object System.Windows.Forms.Label
 $lblSitefDesc.Text = "Esta etapa irá baixar, extrair e executar os instaladores do SITEF.`n" +
@@ -738,93 +772,101 @@ $lblSitefDesc.Text = "Esta etapa irá baixar, extrair e executar os instaladores
                      "Ao fechar os instaladores, o serviço 'GSurfRSA Listener' será iniciado."
 $lblSitefDesc.Font = $FontNormal
 $lblSitefDesc.ForeColor = $ColorMuted
-$lblSitefDesc.Location = New-Object System.Drawing.Point(20, 55)
-$lblSitefDesc.Size = New-Object System.Drawing.Size(($tabControl.Width - 60), 60)
-$tabSitef.Controls.Add($lblSitefDesc)
+$lblSitefDesc.Location = New-Object System.Drawing.Point(0, 35)
+$lblSitefDesc.Size = New-Object System.Drawing.Size(700, 60)
+$panelSitef.Controls.Add($lblSitefDesc)
 
 $btnSitefInstall = New-Object System.Windows.Forms.Button
 $btnSitefInstall.Text = "Instalar SITEF"
-$btnSitefInstall.Location = New-Object System.Drawing.Point(20, 130)
+$btnSitefInstall.Location = New-Object System.Drawing.Point(0, 110)
 $btnSitefInstall.Size = New-Object System.Drawing.Size(180, 35)
 $btnSitefInstall.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
 $btnSitefInstall.BackColor = $ColorPrimary
 $btnSitefInstall.ForeColor = [System.Drawing.Color]::White
 $btnSitefInstall.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$tabSitef.Controls.Add($btnSitefInstall)
+$panelSitef.Controls.Add($btnSitefInstall)
 
 $btnSitefOpenFolder = New-Object System.Windows.Forms.Button
 $btnSitefOpenFolder.Text = "Abrir pasta C:\SITEF"
-$btnSitefOpenFolder.Location = New-Object System.Drawing.Point(220, 130)
+$btnSitefOpenFolder.Location = New-Object System.Drawing.Point(200, 110)
 $btnSitefOpenFolder.Size = New-Object System.Drawing.Size(160, 35)
 $btnSitefOpenFolder.Font = $FontButton
 $btnSitefOpenFolder.BackColor = $ColorSurface
 $btnSitefOpenFolder.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnSitefOpenFolder.FlatAppearance.BorderColor = $ColorBorder
-$tabSitef.Controls.Add($btnSitefOpenFolder)
+$panelSitef.Controls.Add($btnSitefOpenFolder)
 
 $progressSitef = New-Object System.Windows.Forms.ProgressBar
-$progressSitef.Location = New-Object System.Drawing.Point(20, 180)
-$progressSitef.Size = New-Object System.Drawing.Size(($tabControl.Width - 60), 20)
+$progressSitef.Location = New-Object System.Drawing.Point(0, 160)
+$progressSitef.Size = New-Object System.Drawing.Size(700, 20)
 $progressSitef.Minimum = 0
 $progressSitef.Maximum = 100
-$tabSitef.Controls.Add($progressSitef)
+$progressSitef.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+$panelSitef.Controls.Add($progressSitef)
 
 $lblSitefLog = New-Object System.Windows.Forms.Label
 $lblSitefLog.Text = "Log da instalação SITEF:"
 $lblSitefLog.Font = $FontNormal
 $lblSitefLog.ForeColor = $ColorMuted
-$lblSitefLog.Location = New-Object System.Drawing.Point(20, 215)
+$lblSitefLog.Location = New-Object System.Drawing.Point(0, 195)
 $lblSitefLog.Size = New-Object System.Drawing.Size(200, 22)
-$tabSitef.Controls.Add($lblSitefLog)
+$panelSitef.Controls.Add($lblSitefLog)
 
 $txtSitefLog = New-Object System.Windows.Forms.TextBox
 $txtSitefLog.Multiline = $true
 $txtSitefLog.ScrollBars = "Vertical"
 $txtSitefLog.ReadOnly = $true
-$txtSitefLog.Location = New-Object System.Drawing.Point(20, 240)
-$txtSitefLog.Size = New-Object System.Drawing.Size(($tabControl.Width - 60), ($tabHeight - 280))
+$txtSitefLog.Location = New-Object System.Drawing.Point(0, 220)
+$txtSitefLog.Size = New-Object System.Drawing.Size(700, 200)
 $txtSitefLog.Font = New-Object System.Drawing.Font("Consolas", 8)
 $txtSitefLog.BackColor = [System.Drawing.Color]::White
-$tabSitef.Controls.Add($txtSitefLog)
+$txtSitefLog.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+$panelSitef.Controls.Add($txtSitefLog)
 
 # ============================================================
-#  STATUS GERAL E LOGS
+#  STATUS GERAL
 # ============================================================
 $grpStatus = New-Object System.Windows.Forms.GroupBox
 $grpStatus.Text = "Status Geral"
 $grpStatus.Font = $FontHeader
 $grpStatus.ForeColor = $ColorText
-$grpStatus.Location = New-Object System.Drawing.Point($margin, ($topY + $tabHeight + 15))
-$grpStatus.Size = New-Object System.Drawing.Size(($formWidth - $margin*2), $statusHeight)
-$grpStatus.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$contentPanel.Controls.Add($grpStatus)
+$grpStatus.Dock = [System.Windows.Forms.DockStyle]::Fill
+$grpStatus.Padding = New-Object System.Windows.Forms.Padding(10, 20, 10, 10)
+$statusPanel.Controls.Add($grpStatus)
+
+$panelStatusInner = New-Object System.Windows.Forms.Panel
+$panelStatusInner.Dock = [System.Windows.Forms.DockStyle]::Fill
+$grpStatus.Controls.Add($panelStatusInner)
 
 $progressBar = New-Object System.Windows.Forms.ProgressBar
-$progressBar.Location = New-Object System.Drawing.Point(15, 32)
-$progressBar.Size = New-Object System.Drawing.Size(($formWidth - $margin*2 - 40), 20)
+$progressBar.Location = New-Object System.Drawing.Point(10, 10)
+$progressBar.Size = New-Object System.Drawing.Size(700, 20)
 $progressBar.Minimum = 0
 $progressBar.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$grpStatus.Controls.Add($progressBar)
+$panelStatusInner.Controls.Add($progressBar)
 
 $lblStatus = New-Object System.Windows.Forms.Label
 $lblStatus.Text = "Pronto para instalar"
 $lblStatus.Font = $FontNormal
 $lblStatus.ForeColor = $ColorSuccess
-$lblStatus.Location = New-Object System.Drawing.Point(15, 57)
+$lblStatus.Location = New-Object System.Drawing.Point(10, 35)
 $lblStatus.Size = New-Object System.Drawing.Size(330, 22)
-$grpStatus.Controls.Add($lblStatus)
+$panelStatusInner.Controls.Add($lblStatus)
 
 $txtLog = New-Object System.Windows.Forms.TextBox
 $txtLog.Multiline = $true
 $txtLog.ScrollBars = "Vertical"
 $txtLog.ReadOnly = $true
-$txtLog.Location = New-Object System.Drawing.Point(15, 82)
-$txtLog.Size = New-Object System.Drawing.Size(($formWidth - $margin*2 - 40), 105)
+$txtLog.Location = New-Object System.Drawing.Point(10, 62)
+$txtLog.Size = New-Object System.Drawing.Size(700, 120)
 $txtLog.Font = New-Object System.Drawing.Font("Consolas", 8)
 $txtLog.BackColor = [System.Drawing.Color]::White
 $txtLog.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
-$grpStatus.Controls.Add($txtLog)
+$panelStatusInner.Controls.Add($txtLog)
 
+# ============================================================
+#  LOGS E DELEGATES
+# ============================================================
 $AppendLog = {
     param($msg)
     $line = "$msg"
@@ -847,10 +889,7 @@ $script:SitefLogDelegate = {
 # ============================================================
 #  EVENTOS DOS BOTÕES
 # ============================================================
-
-# Evento do botão Executar configuração
 $btnRun.Add_Click({
-    [System.Windows.Forms.MessageBox]::Show("Botão Executar clicado!", "Diagnóstico")
     $btnRun.Enabled = $false
     $btnSelAll.Enabled = $false
     $btnSelNone.Enabled = $false
@@ -910,9 +949,7 @@ $btnRun.Add_Click({
     [System.Windows.Forms.MessageBox]::Show("Provisionamento concluido. Relatorio em:`n$ReportPath", "Finalizado")
 })
 
-# Evento do botão Instalar selecionados (paralelo)
 $btnInstallSelected.Add_Click({
-    [System.Windows.Forms.MessageBox]::Show("Botão Instalar selecionados clicado!", "Diagnóstico")
     $selectedLabels = @($clbInstall.CheckedItems)
     if ($selectedLabels.Count -eq 0) {
         [System.Windows.Forms.MessageBox]::Show("Selecione ao menos um programa na lista.", "Aviso")
@@ -994,9 +1031,7 @@ $btnInstallSelected.Add_Click({
     $btnInstallSelected.Enabled = $true
 })
 
-# Evento do botão Ativar Windows (personalizado)
 $btnCustom.Add_Click({
-    [System.Windows.Forms.MessageBox]::Show("Botão Ativar Windows clicado!", "Diagnóstico")
     if ([string]::IsNullOrWhiteSpace($CustomScriptUrl) -or $CustomScriptUrl -like "*usuario/repositorio*") {
         [System.Windows.Forms.MessageBox]::Show("Edite as variaveis `$CustomScriptUrl e `$CustomScriptLabel no topo do ProvisioningTool.ps1 antes de usar este botao.", "Configure o link")
         return
@@ -1029,10 +1064,8 @@ $btnCustom.Add_Click({
     $btnCustom.Enabled = $true
 })
 
-# Evento do botão Atualizar lista de instalados
 $script:UninstallMap = @{}
 $btnRefreshInstalled.Add_Click({
-    [System.Windows.Forms.MessageBox]::Show("Botão Atualizar lista clicado!", "Diagnóstico")
     $btnRefreshInstalled.Enabled = $false
     $AppendLog.Invoke("Consultando programas instalados no registro...")
     $clbUninstall.Items.Clear()
@@ -1049,9 +1082,7 @@ $btnRefreshInstalled.Add_Click({
     $btnRefreshInstalled.Enabled = $true
 })
 
-# Evento do botão Desinstalar selecionados
 $btnUninstallSelected.Add_Click({
-    [System.Windows.Forms.MessageBox]::Show("Botão Desinstalar clicado!", "Diagnóstico")
     $selected = @($clbUninstall.CheckedItems)
     if ($selected.Count -eq 0) {
         [System.Windows.Forms.MessageBox]::Show("Selecione ao menos um programa para remover.", "Aviso")
@@ -1086,9 +1117,7 @@ $btnUninstallSelected.Add_Click({
     $btnUninstallSelected.Enabled = $true
 })
 
-# Eventos da aba SITEF
 $btnSitefInstall.Add_Click({
-    [System.Windows.Forms.MessageBox]::Show("Botão Instalar SITEF clicado!", "Diagnóstico")
     $btnSitefInstall.Enabled = $false
     $txtSitefLog.Clear()
     $progressSitef.Value = 0
@@ -1101,7 +1130,6 @@ $btnSitefInstall.Add_Click({
 })
 
 $btnSitefOpenFolder.Add_Click({
-    [System.Windows.Forms.MessageBox]::Show("Botão Abrir pasta clicado!", "Diagnóstico")
     $sitefDir = "C:\SITEF"
     if (Test-Path $sitefDir) {
         explorer $sitefDir
@@ -1111,14 +1139,12 @@ $btnSitefOpenFolder.Add_Click({
 })
 
 # ============================================================
-#  CARREGAR LISTA DE INSTALADOS AO ABRIR (COM VERIFICAÇÃO)
+#  CARREGAR LISTA DE INSTALADOS AO ABRIR
 # ============================================================
 $form.Add_Shown({
-    # Verifica se o botão existe antes de chamar PerformClick
     if ($btnRefreshInstalled -ne $null) {
         $btnRefreshInstalled.PerformClick()
     } else {
-        # Fallback: carrega a lista diretamente
         $AppendLog.Invoke("Carregando lista de programas instalados...")
         $clbUninstall.Items.Clear()
         $script:UninstallMap = @{}
