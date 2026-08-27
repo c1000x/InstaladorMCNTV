@@ -1,8 +1,8 @@
 <#
     ProvisioningTool.ps1
     Interface grafica para provisionamento de maquinas Windows.
-    Layout com TableLayoutPanel – adapta-se automaticamente ao redimensionamento da janela.
-    Todas as funções e eventos incluídos.
+    Layout com TableLayoutPanel – adapta-se automaticamente ao redimensionamento.
+    Todas as funções e eventos incluídos, com botões visíveis e aba SITEF.
 #>
 
 # ============================================================
@@ -745,7 +745,7 @@ $btnCustom.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Win
 $panelUninstall.Controls.Add($btnCustom)
 
 # ============================================================
-#  ABA SITEF
+#  ABA SITEF (corrigida para aparecer)
 # ============================================================
 $tabSitef = New-Object System.Windows.Forms.TabPage
 $tabSitef.Text = "SITEF"
