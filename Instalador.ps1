@@ -437,6 +437,10 @@ function Download-DllFly {
     $log.Invoke("=== BAIXANDO DLL_FLY ===")
     $log.Invoke("")
 
+    # Define o máximo da barra de progresso para 100
+    $progressSitef.Maximum = 100
+    $progressSitef.Value = 0
+
     $baseDir = "C:\SITEF"
     $targetDir = Join-Path $baseDir "DLL_FLY"
     $zipUrl = "https://github.com/c1000x/InstaladorMCNTV/raw/a4dbdb2b2fbbea02d3d4109220199490e4e9e1bf/DLL_FLY.zip"
@@ -454,6 +458,7 @@ function Download-DllFly {
         $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         $webClient.DownloadFile($zipUrl, $zipFile)
         $log.Invoke("Download concluído: $zipFile")
+        $progressSitef.Value = 30
     } catch {
         $log.Invoke("ERRO ao baixar DLL_FLY.zip: $($_.Exception.Message)")
         return
@@ -463,12 +468,14 @@ function Download-DllFly {
     try {
         Expand-Archive -Path $zipFile -DestinationPath $targetDir -Force
         $log.Invoke("Extraído com sucesso.")
+        $progressSitef.Value = 70
     } catch {
         $log.Invoke("ERRO ao extrair DLL_FLY.zip: $($_.Exception.Message)")
         $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
         try {
             [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $targetDir, $true)
             $log.Invoke("Extraído com sucesso via fallback.")
+            $progressSitef.Value = 70
         } catch {
             $log.Invoke("Falha na extração: $($_.Exception.Message)")
             return
@@ -482,8 +489,10 @@ function Download-DllFly {
     try {
         Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
         $log.Invoke("Exclusão adicionada com sucesso.")
+        $progressSitef.Value = 95
     } catch {
         $log.Invoke("Aviso: não foi possível adicionar exclusão no Windows Defender: $($_.Exception.Message)")
+        $progressSitef.Value = 95
     }
 
     $log.Invoke("")
@@ -496,6 +505,10 @@ function Download-DllFlyEmbarcado {
     $log = $script:SitefLogDelegate
     $log.Invoke("=== BAIXANDO DLL_FLY_EMBARCADO ===")
     $log.Invoke("")
+
+    # Define o máximo da barra de progresso para 100
+    $progressSitef.Maximum = 100
+    $progressSitef.Value = 0
 
     $baseDir = "C:\SITEF"
     $targetDir = Join-Path $baseDir "DLL_FLY_EMBARCADO"
@@ -514,6 +527,7 @@ function Download-DllFlyEmbarcado {
         $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         $webClient.DownloadFile($zipUrl, $zipFile)
         $log.Invoke("Download concluído: $zipFile")
+        $progressSitef.Value = 30
     } catch {
         $log.Invoke("ERRO ao baixar DLL_FLY_EMBARCADO.zip: $($_.Exception.Message)")
         return
@@ -523,12 +537,14 @@ function Download-DllFlyEmbarcado {
     try {
         Expand-Archive -Path $zipFile -DestinationPath $targetDir -Force
         $log.Invoke("Extraído com sucesso.")
+        $progressSitef.Value = 70
     } catch {
         $log.Invoke("ERRO ao extrair DLL_FLY_EMBARCADO.zip: $($_.Exception.Message)")
         $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
         try {
             [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $targetDir, $true)
             $log.Invoke("Extraído com sucesso via fallback.")
+            $progressSitef.Value = 70
         } catch {
             $log.Invoke("Falha na extração: $($_.Exception.Message)")
             return
@@ -542,8 +558,10 @@ function Download-DllFlyEmbarcado {
     try {
         Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
         $log.Invoke("Exclusão adicionada com sucesso.")
+        $progressSitef.Value = 95
     } catch {
         $log.Invoke("Aviso: não foi possível adicionar exclusão no Windows Defender: $($_.Exception.Message)")
+        $progressSitef.Value = 95
     }
 
     $log.Invoke("")
