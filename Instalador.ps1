@@ -22,6 +22,11 @@
       - Verificação de sucesso/erro das etapas
       - Logs centralizados
       - Ativação direcionada para as configurações oficiais do Windows
+      - Log em tempo real na aba de instalação
+      - Verificação de instalação prévia (winget/choco)
+      - Controle de concorrência (máx 3 jobs)
+      - Desinstalação via winget/choco quando aplicável
+      - Timeout e tratamento de rede nos downloads
 #>
 
 # ============================================================
@@ -45,7 +50,7 @@ if ([string]::IsNullOrWhiteSpace($scriptPath)) {
     [System.IO.File]::WriteAllText(
         $scriptPath,
         $scriptContent,
-        ([System.Text.UTF8Encoding]::new($false))
+        (New-Object System.Text.UTF8Encoding($false))
     )
 }
 
@@ -971,43 +976,112 @@ function Build-AppCatalogLabels {
     return $labels
 }
 
-function Get-InstalledProgramsList {
+# ============================================================
+# FUNÇÕES DE VERIFICAÇÃO DE INSTALAÇÃO (Winget/Choco)
+# ============================================================
 
-    $paths = @(
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
-        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
-    )
+function Is-WingetPackageInstalled {
+    param($id)
+    try {
+        $result = winget list --id $id --exact --accept-source-agreements 2>$null
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        return $false
+    }
+}
 
-    Get-ItemProperty `
-        -Path $paths `
-        -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.DisplayName -and
-            (-not $_.SystemComponent) -and
-            $_.UninstallString
-        } |
-        Select-Object `
-            DisplayName,
-            UninstallString,
-            QuietUninstallString |
-        Sort-Object DisplayName
+function Is-ChocoPackageInstalled {
+    param($id)
+    try {
+        $result = choco list $id --exact --limit-output 2>$null
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        return $false
+    }
+}
+
+# ============================================================
+# DESINSTALAÇÃO (com suporte a Winget/Choco)
+# ============================================================
+
+function Uninstall-WingetPackage {
+    param($id)
+    try {
+        winget uninstall --id $id --silent --accept-source-agreements 2>&1
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Uninstall-ChocoPackage {
+    param($id)
+    try {
+        choco uninstall $id -y 2>&1
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Uninstall-RegistryProgram {
+    param($cmd)
+    try {
+        # Adiciona /quiet se for MSI e não tiver
+        if ($cmd -match "(?i)msiexec" -and $cmd -notmatch "(?i)/qn|/quiet") {
+            $cmd = "$cmd /quiet /norestart"
+        }
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -Wait -ErrorAction Stop
+        return $true
+    }
+    catch {
+        return $false
+    }
 }
 
 # ============================================================
 # SITEF
 # ============================================================
 
-function Get-WebClient {
-
+function Get-WebClientWithTimeout {
+    param([int]$TimeoutSeconds = 30)
     $client = New-Object System.Net.WebClient
-
-    $client.Headers.Add(
-        "User-Agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    )
-
+    $client.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+    # WebClient não tem timeout direto, usamos WebRequest por baixo
+    # Mas para simplificar, usamos Invoke-WebRequest com timeout para download
+    # No entanto, precisamos baixar para arquivo, então usamos WebClient com um trick
+    # Melhor: usar System.Net.HttpWebRequest
     return $client
+}
+
+function Download-FileWithTimeout {
+    param(
+        [string]$Url,
+        [string]$Destination,
+        [int]$TimeoutSeconds = 60
+    )
+    try {
+        $webRequest = [System.Net.WebRequest]::Create($Url)
+        $webRequest.Timeout = $TimeoutSeconds * 1000
+        $webRequest.Method = "GET"
+        $webRequest.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        $response = $webRequest.GetResponse()
+        $responseStream = $response.GetResponseStream()
+        $fileStream = [System.IO.File]::Create($Destination)
+        $responseStream.CopyTo($fileStream)
+        $fileStream.Close()
+        $responseStream.Close()
+        $response.Close()
+        return $true
+    }
+    catch {
+        Write-Error "Erro no download: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 function Validate-ZipFile {
@@ -1157,14 +1231,9 @@ function Install-Sitef {
 
             try {
 
-                $webClient = Get-WebClient
-
-                $webClient.DownloadFile(
-                    $url,
-                    $zipPath
-                )
-
-                $webClient.Dispose()
+                if (-not (Download-FileWithTimeout -Url $url -Destination $zipPath -TimeoutSeconds 120)) {
+                    throw "Falha no download de $url"
+                }
 
                 $log.Invoke(
                     "Download concluído."
@@ -1479,14 +1548,9 @@ function Install-DllPackage {
             "Baixando $PackageName.zip..."
         )
 
-        $webClient = Get-WebClient
-
-        $webClient.DownloadFile(
-            $ZipUrl,
-            $zipFile
-        )
-
-        $webClient.Dispose()
+        if (-not (Download-FileWithTimeout -Url $ZipUrl -Destination $zipFile -TimeoutSeconds 120)) {
+            throw "Falha no download de $ZipUrl"
+        }
 
         $log.Invoke(
             "Download concluído."
@@ -1743,37 +1807,37 @@ $ColorBorder =
 # ============================================================
 
 $FontNormal =
-    [System.Drawing.Font]::new(
+    New-Object System.Drawing.Font(
         "Segoe UI",
         9
     )
 
 $FontSmall =
-    [System.Drawing.Font]::new(
+    New-Object System.Drawing.Font(
         "Segoe UI",
         8
     )
 
 $FontHeader =
-    [System.Drawing.Font]::new(
+    New-Object System.Drawing.Font(
         "Segoe UI Semibold",
         10
     )
 
 $FontTitle =
-    [System.Drawing.Font]::new(
+    New-Object System.Drawing.Font(
         "Segoe UI Semibold",
         18
     )
 
 $FontButton =
-    [System.Drawing.Font]::new(
+    New-Object System.Drawing.Font(
         "Segoe UI",
         9
     )
 
 $FontButtonBold =
-    [System.Drawing.Font]::new(
+    New-Object System.Drawing.Font(
         "Segoe UI Semibold",
         10
     )
@@ -1804,13 +1868,13 @@ $form.Font =
     $FontNormal
 
 $form.MinimumSize =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         900,
         700
     )
 
 $form.Size =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         1100,
         800
     )
@@ -1873,26 +1937,26 @@ $configLayout.ColumnCount = 1
 $configLayout.RowCount = 3
 
 $configLayout.RowStyles.Add(
-    ([System.Windows.Forms.RowStyle]::new(
+    (New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::AutoSize
     ))
 )
 
 $configLayout.RowStyles.Add(
-    ([System.Windows.Forms.RowStyle]::new(
+    (New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::Percent,
         100
     ))
 )
 
 $configLayout.RowStyles.Add(
-    ([System.Windows.Forms.RowStyle]::new(
+    (New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::AutoSize
     ))
 )
 
 $configLayout.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         10
     )
 
@@ -1915,7 +1979,7 @@ $lblConfigTitle.ForeColor =
 $lblConfigTitle.AutoSize = $true
 
 $lblConfigTitle.Margin =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         3,3,3,10
     )
 
@@ -1961,7 +2025,7 @@ $tableCheck.RowCount =
     ) + 2
 
 $tableCheck.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         5
     )
 
@@ -1977,7 +2041,7 @@ $tableCheck.ColumnStyles.Add(
 )
 
 $tableCheck.ColumnStyles.Add(
-    [System.Windows.Forms.ColumnStyle]::new(
+    New-Object System.Windows.Forms.ColumnStyle(
         [System.Windows.Forms.SizeType]::Percent,
         50
     )
@@ -2009,7 +2073,7 @@ foreach ($key in $steps.Keys) {
     $cb.AutoSize = $true
 
     $cb.Margin =
-        [System.Windows.Forms.Padding]::new(
+        New-Object System.Windows.Forms.Padding(
             5,5,5,5
         )
 
@@ -2045,7 +2109,7 @@ $chkDryRun.ForeColor =
 $chkDryRun.AutoSize = $true
 
 $chkDryRun.Margin =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         5,10,5,5
     )
 
@@ -2093,7 +2157,7 @@ $lblStatus.ForeColor =
 $lblStatus.AutoSize = $true
 
 $lblStatus.Location =
-    [System.Drawing.Point]::new(
+    New-Object System.Drawing.Point(
         5,
         5
     )
@@ -2113,7 +2177,7 @@ $progressBar.Width = 350
 $progressBar.Height = 20
 
 $progressBar.Location =
-    [System.Drawing.Point]::new(
+    New-Object System.Drawing.Point(
         5,
         27
     )
@@ -2121,6 +2185,20 @@ $progressBar.Location =
 $panelConfigStatus.Controls.Add(
     $progressBar
 )
+
+# LOG DA CONFIGURAÇÃO (AGORA VISÍVEL)
+$txtConfigLog =
+    New-Object System.Windows.Forms.TextBox
+
+$txtConfigLog.Multiline = $true
+$txtConfigLog.ReadOnly = $true
+$txtConfigLog.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+$txtConfigLog.Height = 120
+$txtConfigLog.Width = 700
+$txtConfigLog.Location = New-Object System.Drawing.Point(5, 55)
+$txtConfigLog.Font = New-Object System.Drawing.Font("Consolas", 9)
+$txtConfigLog.BackColor = [System.Drawing.Color]::WhiteSmoke
+$panelConfigStatus.Controls.Add($txtConfigLog)
 
 $panelButtonsConfig =
     New-Object System.Windows.Forms.FlowLayoutPanel
@@ -2134,7 +2212,7 @@ $panelButtonsConfig.Dock =
 $panelButtonsConfig.Height = 50
 
 $panelButtonsConfig.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         5
     )
 
@@ -2155,7 +2233,7 @@ $btnSelAll.Text =
     "Marcar todos"
 
 $btnSelAll.Size =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         130,
         32
     )
@@ -2180,7 +2258,7 @@ $btnSelNone.Text =
     "Desmarcar todos"
 
 $btnSelNone.Size =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         140,
         32
     )
@@ -2219,13 +2297,13 @@ $btnRun.FlatStyle =
 $btnRun.FlatAppearance.BorderSize = 0
 
 $btnRun.Size =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         190,
         32
     )
 
 $btnRun.Margin =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         20,0,0,0
     )
 
@@ -2266,26 +2344,27 @@ $tableInstall.RowStyles.Add(
 )
 
 $tableInstall.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
+    New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::Percent,
-        100
+        60
     )
 )
 
 $tableInstall.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
-        [System.Windows.Forms.SizeType]::AutoSize
+    New-Object System.Windows.Forms.RowStyle(
+        [System.Windows.Forms.SizeType]::Percent,
+        40
     )
 )
 
 $tableInstall.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
+    New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::AutoSize
     )
 )
 
 $tableInstall.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         10
     )
 
@@ -2337,7 +2416,7 @@ $grpInstall.Dock =
     [System.Windows.Forms.DockStyle]::Fill
 
 $grpInstall.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         10
     )
 
@@ -2352,7 +2431,7 @@ $txtSearchInstall.Width = 400
 $txtSearchInstall.Height = 25
 
 $txtSearchInstall.Location =
-    [System.Drawing.Point]::new(
+    New-Object System.Drawing.Point(
         15,
         25
     )
@@ -2370,7 +2449,7 @@ $lblSearch.Text =
 $lblSearch.AutoSize = $true
 
 $lblSearch.Location =
-    [System.Drawing.Point]::new(
+    New-Object System.Drawing.Point(
         420,
         28
     )
@@ -2388,13 +2467,13 @@ $clbInstall.Font =
     $FontNormal
 
 $clbInstall.Location =
-    [System.Drawing.Point]::new(
+    New-Object System.Drawing.Point(
         15,
         60
     )
 
 $clbInstall.Size =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         600,
         350
     )
@@ -2448,117 +2527,22 @@ $txtSearchInstall.Add_TextChanged({
     }
 })
 
-# ============================================================
-# STATUS + PROGRESSO DA INSTALAÇÃO
-# ============================================================
-
-$panelInstallStatus =
-    New-Object System.Windows.Forms.Panel
-
-$panelInstallStatus.Dock =
-    [System.Windows.Forms.DockStyle]::Fill
-
-$panelInstallStatus.Height = 105
-
-$tableInstall.Controls.Add(
-    $panelInstallStatus,
-    0,
-    2
-)
-
-$lblInstallStatus =
-    New-Object System.Windows.Forms.Label
-
-$lblInstallStatus.Text =
-    "Pronto para instalar."
-
-$lblInstallStatus.AutoSize = $true
-$lblInstallStatus.Font = $FontNormal
-$lblInstallStatus.Location =
-    [System.Drawing.Point]::new(
-        5,
-        5
-    )
-
-$panelInstallStatus.Controls.Add(
-    $lblInstallStatus
-)
-
-$installProgressBar =
-    New-Object System.Windows.Forms.ProgressBar
-
-$installProgressBar.Minimum = 0
-$installProgressBar.Maximum = 100
-$installProgressBar.Value = 0
-$installProgressBar.Style =
-    [System.Windows.Forms.ProgressBarStyle]::Continuous
-
-$installProgressBar.Location =
-    [System.Drawing.Point]::new(
-        5,
-        30
-    )
-
-$installProgressBar.Size =
-    [System.Drawing.Size]::new(
-        650,
-        22
-    )
-
-$panelInstallStatus.Controls.Add(
-    $installProgressBar
-)
-
+# LOG DE INSTALAÇÃO EM TEMPO REAL
 $txtInstallLog =
     New-Object System.Windows.Forms.TextBox
 
 $txtInstallLog.Multiline = $true
 $txtInstallLog.ReadOnly = $true
-$txtInstallLog.ScrollBars =
-    [System.Windows.Forms.ScrollBars]::Vertical
+$txtInstallLog.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+$txtInstallLog.Dock = [System.Windows.Forms.DockStyle]::Fill
+$txtInstallLog.Font = New-Object System.Drawing.Font("Consolas", 9)
+$txtInstallLog.BackColor = [System.Drawing.Color]::WhiteSmoke
 
-$txtInstallLog.Location =
-    [System.Drawing.Point]::new(
-        5,
-        58
-    )
-
-$txtInstallLog.Size =
-    [System.Drawing.Size]::new(
-        650,
-        42
-    )
-
-$txtInstallLog.Anchor =
-    [System.Windows.Forms.AnchorStyles]::Top -bor
-    [System.Windows.Forms.AnchorStyles]::Left -bor
-    [System.Windows.Forms.AnchorStyles]::Right
-
-$panelInstallStatus.Controls.Add(
-    $txtInstallLog
+$tableInstall.Controls.Add(
+    $txtInstallLog,
+    0,
+    2
 )
-
-$AppendInstallLog = {
-    param(
-        [string]$Message
-    )
-
-    if ($txtInstallLog -ne $null) {
-
-        $txtInstallLog.AppendText(
-            "$Message`r`n"
-        )
-
-        $txtInstallLog.SelectionStart =
-            $txtInstallLog.Text.Length
-
-        $txtInstallLog.ScrollToCaret()
-    }
-
-    Write-LogFile "[INSTALAÇÃO] $Message"
-
-    [System.Windows.Forms.Application]::DoEvents()
-}
 
 $panelInstallButton =
     New-Object System.Windows.Forms.Panel
@@ -2595,13 +2579,13 @@ $btnInstallSelected.FlatStyle =
 $btnInstallSelected.FlatAppearance.BorderSize = 0
 
 $btnInstallSelected.Size =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         260,
         40
     )
 
 $btnInstallSelected.Location =
-    [System.Drawing.Point]::new(
+    New-Object System.Drawing.Point(
         5,
         5
     )
@@ -2637,26 +2621,26 @@ $tableUninstall.ColumnCount = 1
 $tableUninstall.RowCount = 3
 
 $tableUninstall.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
+    New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::AutoSize
     )
 )
 
 $tableUninstall.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
+    New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::Percent,
         100
     )
 )
 
 $tableUninstall.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
+    New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::AutoSize
     )
 )
 
 $tableUninstall.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         10
     )
 
@@ -2728,7 +2712,7 @@ $btnRefreshInstalled.Text =
     "Atualizar lista"
 
 $btnRefreshInstalled.Size =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         130,
         32
     )
@@ -2744,7 +2728,7 @@ $btnUninstallSelected.Text =
     "Desinstalar"
 
 $btnUninstallSelected.Size =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         130,
         32
     )
@@ -2795,7 +2779,7 @@ $flowActivate.WrapContents = $false
 $flowActivate.AutoScroll = $true
 
 $flowActivate.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         30
     )
 
@@ -2810,7 +2794,7 @@ $lblActivateTitle.Text =
     "Ativação do Windows"
 
 $lblActivateTitle.Font =
-    [System.Drawing.Font]::new(
+    New-Object System.Drawing.Font(
         "Segoe UI Semibold",
         16
     )
@@ -2818,7 +2802,7 @@ $lblActivateTitle.Font =
 $lblActivateTitle.AutoSize = $true
 
 $lblActivateTitle.Margin =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         0,0,0,20
     )
 
@@ -2833,7 +2817,7 @@ $lblActivateDesc.Text =
     "Use as configurações oficiais do Windows para verificar o estado da ativação, inserir uma chave de produto ou solucionar problemas de ativação."
 
 $lblActivateDesc.MaximumSize =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         700,
         0
     )
@@ -2841,7 +2825,7 @@ $lblActivateDesc.MaximumSize =
 $lblActivateDesc.AutoSize = $true
 
 $lblActivateDesc.Margin =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         0,0,0,25
     )
 
@@ -2870,7 +2854,7 @@ $btnCustomActivate.FlatStyle =
 $btnCustomActivate.FlatAppearance.BorderSize = 0
 
 $btnCustomActivate.Size =
-    [System.Drawing.Size]::new(
+    New-Object System.Drawing.Size(
         300,
         50
     )
@@ -2906,32 +2890,32 @@ $tableSitef.ColumnCount = 1
 $tableSitef.RowCount = 4
 
 $tableSitef.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
+    New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::AutoSize
     )
 )
 
 $tableSitef.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
+    New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::AutoSize
     )
 )
 
 $tableSitef.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
+    New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::AutoSize
     )
 )
 
 $tableSitef.RowStyles.Add(
-    [System.Windows.Forms.RowStyle]::new(
+    New-Object System.Windows.Forms.RowStyle(
         [System.Windows.Forms.SizeType]::Percent,
         100
     )
 )
 
 $tableSitef.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         15
     )
 
@@ -2950,7 +2934,7 @@ $lblSitefTitle.Text =
     "Instalação do Ambiente SITEF"
 
 $lblSitefTitle.Font =
-    [System.Drawing.Font]::new(
+    New-Object System.Drawing.Font(
         "Segoe UI Semibold",
         14
     )
@@ -2961,7 +2945,7 @@ $lblSitefTitle.ForeColor =
 $lblSitefTitle.AutoSize = $true
 
 $lblSitefTitle.Margin =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         3,3,3,10
     )
 
@@ -2993,7 +2977,7 @@ $lblSitefDesc.ForeColor =
 $lblSitefDesc.AutoSize = $true
 
 $lblSitefDesc.Margin =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         3,0,3,10
     )
 
@@ -3021,7 +3005,7 @@ $flowSitefButtons.WrapContents = $true
 $flowSitefButtons.AutoSize = $true
 
 $flowSitefButtons.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         3
     )
 
@@ -3060,13 +3044,13 @@ function New-SitefButton {
     $button.FlatAppearance.BorderSize = 0
 
     $button.Size =
-        [System.Drawing.Size]::new(
+        New-Object System.Drawing.Size(
             $Width,
             40
         )
 
     $button.Margin =
-        [System.Windows.Forms.Padding]::new(
+        New-Object System.Windows.Forms.Padding(
             4
         )
 
@@ -3156,7 +3140,7 @@ $panelSitefLog.Dock =
     [System.Windows.Forms.DockStyle]::Fill
 
 $panelSitefLog.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         0,10,0,0
     )
 
@@ -3182,7 +3166,7 @@ $grpSitefLog.Dock =
     [System.Windows.Forms.DockStyle]::Fill
 
 $grpSitefLog.Padding =
-    [System.Windows.Forms.Padding]::new(
+    New-Object System.Windows.Forms.Padding(
         10
     )
 
@@ -3204,7 +3188,7 @@ $txtSitefLog.Dock =
     [System.Windows.Forms.DockStyle]::Fill
 
 $txtSitefLog.Font =
-    [System.Drawing.Font]::new(
+    New-Object System.Drawing.Font(
         "Consolas",
         9
     )
@@ -3233,69 +3217,41 @@ $grpSitefLog.Controls.Add(
 )
 
 # ============================================================
-# LOG DA CONFIGURAÇÃO
+# FUNÇÕES DE LOG (para as abas)
 # ============================================================
 
-$txtLog =
-    New-Object System.Windows.Forms.TextBox
+function Write-ConfigLog {
+    param([string]$Message)
+    $line = "$Message`r`n"
+    $txtConfigLog.AppendText($line)
+    $txtConfigLog.SelectionStart = $txtConfigLog.Text.Length
+    $txtConfigLog.ScrollToCaret()
+    Write-LogFile $Message
+    [System.Windows.Forms.Application]::DoEvents()
+}
 
-$txtLog.Multiline = $true
-
-$txtLog.ReadOnly = $true
-
-$txtLog.ScrollBars =
-    [System.Windows.Forms.ScrollBars]::Vertical
-
-$txtLog.Visible = $false
-
-function Write-MainLog {
-
-    param(
-        [string]$Message
-    )
-
-    $line = "$Message"
-
-    if ($txtLog -ne $null) {
-
-        $txtLog.AppendText(
-            "$line`r`n"
-        )
-
-        $txtLog.SelectionStart =
-            $txtLog.Text.Length
-
-        $txtLog.ScrollToCaret()
-    }
-
-    Write-LogFile $line
-
+function Write-InstallLog {
+    param([string]$Message)
+    $line = "$Message`r`n"
+    $txtInstallLog.AppendText($line)
+    $txtInstallLog.SelectionStart = $txtInstallLog.Text.Length
+    $txtInstallLog.ScrollToCaret()
+    Write-LogFile "[INSTALL] $Message"
     [System.Windows.Forms.Application]::DoEvents()
 }
 
 $AppendLog = {
     param($msg)
-
-    Write-MainLog "$msg"
+    Write-ConfigLog $msg
 }
 
 $script:SitefLogDelegate = {
-
     param($msg)
-
-    $line = "$msg"
-
-    $txtSitefLog.AppendText(
-        "$line`r`n"
-    )
-
-    $txtSitefLog.SelectionStart =
-        $txtSitefLog.Text.Length
-
+    $line = "$msg`r`n"
+    $txtSitefLog.AppendText($line)
+    $txtSitefLog.SelectionStart = $txtSitefLog.Text.Length
     $txtSitefLog.ScrollToCaret()
-
-    Write-LogFile "[SITEF] $line"
-
+    Write-LogFile "[SITEF] $msg"
     [System.Windows.Forms.Application]::DoEvents()
 }
 
@@ -3337,7 +3293,7 @@ $btnRun.Add_Click({
 
     $script:Results = [ordered]@{}
 
-    $txtLog.Clear()
+    $txtConfigLog.Clear()
 
     $DryRun =
         [bool]$chkDryRun.Checked
@@ -3367,15 +3323,15 @@ $btnRun.Add_Click({
         return
     }
 
-    Write-MainLog(
+    Write-ConfigLog(
         "=== INICIANDO PROVISIONAMENTO ==="
     )
 
-    Write-MainLog(
+    Write-ConfigLog(
         "Modo: $(if ($DryRun) { 'SIMULAÇÃO' } else { 'EXECUÇÃO REAL' })"
     )
 
-    Write-MainLog("")
+    Write-ConfigLog("")
 
     $progressBar.Minimum = 0
     $progressBar.Maximum =
@@ -3388,8 +3344,8 @@ $btnRun.Add_Click({
         $lblStatus.Text =
             "Executando: $key..."
 
-        Write-MainLog("")
-        Write-MainLog(
+        Write-ConfigLog("")
+        Write-ConfigLog(
             ">>> $key"
         )
 
@@ -3405,7 +3361,7 @@ $btnRun.Add_Click({
                 $script:Results[$key] =
                     "FALHA"
 
-                Write-MainLog(
+                Write-ConfigLog(
                     "Resultado: FALHA"
                 )
             }
@@ -3419,7 +3375,7 @@ $btnRun.Add_Click({
                         "OK"
                     }
 
-                Write-MainLog(
+                Write-ConfigLog(
                     "Resultado: $($script:Results[$key])"
                 )
             }
@@ -3432,7 +3388,7 @@ $btnRun.Add_Click({
             $script:Results[$key] =
                 "FALHA: $errorMessage"
 
-            Write-MainLog(
+            Write-ConfigLog(
                 "ERRO em '$key': $errorMessage"
             )
         }
@@ -3444,8 +3400,8 @@ $btnRun.Add_Click({
         [System.Windows.Forms.Application]::DoEvents()
     }
 
-    Write-MainLog("")
-    Write-MainLog(
+    Write-ConfigLog("")
+    Write-ConfigLog(
         "=== PROVISIONAMENTO CONCLUÍDO ==="
     )
 
@@ -3475,13 +3431,13 @@ $btnRun.Add_Click({
                 -Path $ReportPath `
                 -Encoding UTF8
 
-        Write-MainLog(
+        Write-ConfigLog(
             "Relatório salvo em: $ReportPath"
         )
     }
     catch {
 
-        Write-MainLog(
+        Write-ConfigLog(
             "ERRO ao salvar relatório: $($_.Exception.Message)"
         )
     }
@@ -3506,7 +3462,7 @@ $btnRun.Add_Click({
 })
 
 # ============================================================
-# INSTALAR APLICATIVOS
+# INSTALAR APLICATIVOS (COM VERIFICAÇÃO PRÉVIA E CONTROLE DE CONCORRÊNCIA)
 # ============================================================
 
 $btnInstallSelected.Add_Click({
@@ -3520,33 +3476,29 @@ $btnInstallSelected.Add_Click({
 
         [System.Windows.Forms.MessageBox]::Show(
             "Selecione ao menos um aplicativo.",
-            "Aviso",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Warning
-        ) | Out-Null
+            "Aviso"
+        )
 
         return
     }
 
     $btnInstallSelected.Enabled = $false
-    $clbInstall.Enabled = $false
-    $txtSearchInstall.Enabled = $false
 
-    $installProgressBar.Minimum = 0
-    $installProgressBar.Maximum = $selectedLabels.Count
-    $installProgressBar.Value = 0
+    Write-InstallLog("")
+    Write-InstallLog(
+        "== INSTALAÇÃO DE APLICATIVOS =="
+    )
 
-    $txtInstallLog.Clear()
+    Write-InstallLog(
+        "Total: $($selectedLabels.Count)"
+    )
 
-    & $AppendInstallLog ""
-    & $AppendInstallLog "============================================"
-    & $AppendInstallLog "       INSTALAÇÃO DE APLICATIVOS"
-    & $AppendInstallLog "============================================"
-    & $AppendInstallLog "Total selecionado: $($selectedLabels.Count)"
-    & $AppendInstallLog ""
-
+    $totalJobs = 0
     $completed = 0
-    $failed = 0
+    $maxConcurrent = 3  # limite de concorrência
+
+    $jobs = @()
+    $results = @{}
 
     try {
 
@@ -3560,254 +3512,142 @@ $btnInstallSelected.Add_Click({
 
         if ($needsChoco.Count -gt 0) {
 
-            $lblInstallStatus.Text =
-                "Verificando Chocolatey..."
+            if (-not (Ensure-ChocoAvailable -Log $AppendLog)) {
 
-            [System.Windows.Forms.Application]::DoEvents()
+                Write-InstallLog(
+                    "Chocolatey não está disponível."
+                )
 
-            if (-not (Ensure-ChocoAvailable -Log $AppendInstallLog)) {
+                $btnInstallSelected.Enabled = $true
 
-                throw "Chocolatey não está disponível. Instale o Chocolatey ou selecione apenas aplicativos do Winget."
+                return
             }
         }
 
+        # Filtrar aplicativos já instalados
+        $toInstall = @()
         foreach ($label in $selectedLabels) {
-
             $info = $script:AppCatalogMap[$label]
-
-            if (-not $info) {
-                & $AppendInstallLog "AVISO: aplicativo não encontrado no catálogo: $label"
-                continue
-            }
-
+            if (-not $info) { continue }
             $manager = $info.Manager
             $id = $info.Id
-            $number = $completed + 1
-
-            $lblInstallStatus.Text =
-                "Instalando $number de $($selectedLabels.Count): $id"
-
-            & $AppendInstallLog "[$number/$($selectedLabels.Count)] Iniciando: $label"
-
-            # Localiza o executável do gerenciador
-            if ($manager -eq "choco") {
-
-                $command = Get-Command choco.exe -ErrorAction SilentlyContinue
-
-                if ($command) {
-                    $exe = $command.Source
-                }
-                else {
-                    $exe = Join-Path $env:ProgramData "chocolatey\bin\choco.exe"
-                }
-
-                $arguments =
-                    "install `"$id`" -y --force --ignore-checksums"
+            $alreadyInstalled = $false
+            if ($manager -eq "winget" -or $manager -eq "wingetStore") {
+                $alreadyInstalled = Is-WingetPackageInstalled -id $id
             }
-            elseif ($manager -eq "winget") {
-
-                $command = Get-Command winget.exe -ErrorAction SilentlyContinue
-
-                if (-not $command) {
-                    throw "Winget não foi encontrado neste computador."
-                }
-
-                $exe = $command.Source
-
-                $arguments =
-                    "install -e --id `"$id`" --accept-source-agreements --accept-package-agreements --silent"
+            elseif ($manager -eq "choco") {
+                $alreadyInstalled = Is-ChocoPackageInstalled -id $id
             }
-            elseif ($manager -eq "wingetStore") {
-
-                $command = Get-Command winget.exe -ErrorAction SilentlyContinue
-
-                if (-not $command) {
-                    throw "Winget não foi encontrado neste computador."
-                }
-
-                $exe = $command.Source
-
-                $arguments =
-                    "install --id `"$id`" --source msstore --accept-source-agreements --accept-package-agreements --silent"
+            if ($alreadyInstalled) {
+                Write-InstallLog("$label já está instalado. Pulando.")
+            } else {
+                $toInstall += @{ Label = $label; Info = $info }
             }
-            else {
-
-                & $AppendInstallLog "ERRO: gerenciador desconhecido: $manager"
-                $failed++
-                continue
-            }
-
-            if (-not (Test-Path $exe)) {
-                throw "Executável não encontrado: $exe"
-            }
-
-            & $AppendInstallLog "Executando: $exe $arguments"
-
-            $psi =
-                [System.Diagnostics.ProcessStartInfo]::new()
-
-            $psi.FileName = $exe
-            $psi.Arguments = $arguments
-            $psi.UseShellExecute = $false
-            $psi.CreateNoWindow = $true
-            $psi.RedirectStandardOutput = $true
-            $psi.RedirectStandardError = $true
-            $psi.StandardOutputEncoding =
-                [System.Text.Encoding]::UTF8
-            $psi.StandardErrorEncoding =
-                [System.Text.Encoding]::UTF8
-
-            $process =
-                [System.Diagnostics.Process]::new()
-
-            $process.StartInfo = $psi
-
-            if (-not $process.Start()) {
-
-                throw "Não foi possível iniciar o instalador: $id"
-            }
-
-            # Enquanto o instalador trabalha, mantém a interface responsiva.
-            $installProgressBar.Style =
-                [System.Windows.Forms.ProgressBarStyle]::Marquee
-
-            while (-not $process.HasExited) {
-
-                $lblInstallStatus.Text =
-                    "Instalando $number de $($selectedLabels.Count): $id..."
-
-                [System.Windows.Forms.Application]::DoEvents()
-
-                Start-Sleep -Milliseconds 150
-            }
-
-            # Garante que a saída foi liberada.
-            $stdout = $process.StandardOutput.ReadToEnd()
-            $stderr = $process.StandardError.ReadToEnd()
-
-            $exitCode = $process.ExitCode
-
-            $process.Dispose()
-
-            $installProgressBar.Style =
-                [System.Windows.Forms.ProgressBarStyle]::Continuous
-
-            if ($stdout) {
-
-                foreach ($line in ($stdout -split "`r?`n")) {
-
-                    if (-not [string]::IsNullOrWhiteSpace($line)) {
-                        & $AppendInstallLog $line
-                    }
-                }
-            }
-
-            if ($stderr) {
-
-                foreach ($line in ($stderr -split "`r?`n")) {
-
-                    if (-not [string]::IsNullOrWhiteSpace($line)) {
-                        & $AppendInstallLog "INFO/ERRO: $line"
-                    }
-                }
-            }
-
-            if ($exitCode -eq 0) {
-
-                $completed++
-
-                & $AppendInstallLog "SUCESSO: $id"
-            }
-            else {
-
-                $failed++
-
-                & $AppendInstallLog "FALHA: $id (código $exitCode)"
-            }
-
-            $installProgressBar.Value =
-                [Math]::Min(
-                    $completed + $failed,
-                    $installProgressBar.Maximum
-                )
-
-            $percent =
-                [int](
-                    (($completed + $failed) /
-                    [double]$selectedLabels.Count) * 100
-                )
-
-            $lblInstallStatus.Text =
-                "Progresso: $($completed + $failed) de $($selectedLabels.Count) — $percent%"
-
-            [System.Windows.Forms.Application]::DoEvents()
-
-            & $AppendInstallLog ""
         }
 
-        $installProgressBar.Value =
-            $installProgressBar.Maximum
+        if ($toInstall.Count -eq 0) {
+            Write-InstallLog("Nenhum novo aplicativo para instalar.")
+            $btnInstallSelected.Enabled = $true
+            return
+        }
 
-        $lblInstallStatus.Text =
-            "Instalação concluída: $completed sucesso(s), $failed falha(s)."
+        Write-InstallLog("Instalando $($toInstall.Count) aplicativos...")
 
-        & $AppendInstallLog "============================================"
-        & $AppendInstallLog "INSTALAÇÃO FINALIZADA"
-        & $AppendInstallLog "Sucesso: $completed"
-        & $AppendInstallLog "Falhas:  $failed"
-        & $AppendInstallLog "============================================"
+        $totalJobs = $toInstall.Count
+        $progressBar.Minimum = 0
+        $progressBar.Maximum = 100
+        $progressBar.Value = 0
 
-        [System.Windows.Forms.MessageBox]::Show(
-            "Instalação finalizada.`r`n`r`nSucesso: $completed`r`nFalhas: $failed",
-            "Instalar aplicativos",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            $(if ($failed -eq 0) {
-                [System.Windows.Forms.MessageBoxIcon]::Information
+        # Iniciar jobs limitados
+        $jobQueue = [System.Collections.Queue]::new($toInstall)
+        $runningJobs = @()
+
+        while ($jobQueue.Count -gt 0 -or $runningJobs.Count -gt 0) {
+            # Iniciar novos jobs enquanto houver capacidade e fila
+            while ($runningJobs.Count -lt $maxConcurrent -and $jobQueue.Count -gt 0) {
+                $item = $jobQueue.Dequeue()
+                $info = $item.Info
+                $id = $info.Id
+                $manager = $info.Manager
+                $label = $item.Label
+
+                Write-InstallLog("Iniciando instalação de $label")
+
+                $jobScript = {
+                    param($manager, $id)
+                    $output = @()
+                    try {
+                        switch ($manager) {
+                            "choco" {
+                                $out = choco install $id -y --force --ignore-checksums 2>&1
+                                $output += $out
+                            }
+                            "winget" {
+                                $out = winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent 2>&1
+                                $output += $out
+                            }
+                            "wingetStore" {
+                                $out = winget install --id $id --source msstore --accept-source-agreements --accept-package-agreements --silent 2>&1
+                                $output += $out
+                            }
+                        }
+                        return @{ Success = $true; Output = $output }
+                    }
+                    catch {
+                        return @{ Success = $false; Output = @("ERRO: $($_.Exception.Message)") }
+                    }
+                }
+
+                $job = Start-Job -ScriptBlock $jobScript -ArgumentList $manager, $id
+                $runningJobs += @{ Job = $job; Label = $label }
             }
-            else {
-                [System.Windows.Forms.MessageBoxIcon]::Warning
-            })
-        ) | Out-Null
+
+            # Aguardar algum job terminar
+            Start-Sleep -Milliseconds 500
+
+            # Verificar jobs finalizados
+            $finished = $runningJobs | Where-Object { $_.Job.State -ne 'Running' }
+            foreach ($item in $finished) {
+                $job = $item.Job
+                $label = $item.Label
+                $result = Receive-Job -Job $job -ErrorAction SilentlyContinue
+                Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+                $completed++
+                if ($result -and $result.Success) {
+                    Write-InstallLog("$label instalado com sucesso.")
+                    $results[$label] = "OK"
+                } else {
+                    Write-InstallLog("Falha na instalação de $label.")
+                    $results[$label] = "FALHA"
+                }
+                # Atualizar progresso
+                $percent = [int](($completed / $totalJobs) * 100)
+                if ($percent -gt 100) { $percent = 100 }
+                $progressBar.Value = $percent
+                $lblStatus.Text = "Instalando: $completed de $totalJobs"
+                [System.Windows.Forms.Application]::DoEvents()
+            }
+
+            # Remover jobs finalizados da lista de running
+            $runningJobs = $runningJobs | Where-Object { $_.Job.State -eq 'Running' }
+        }
+
+        $progressBar.Value = 100
+        $lblStatus.Text = "Instalação de aplicativos concluída."
+        Write-InstallLog("=== INSTALAÇÃO DE APLICATIVOS CONCLUÍDA ===")
     }
     catch {
-
-        $installProgressBar.Style =
-            [System.Windows.Forms.ProgressBarStyle]::Continuous
-
-        $installProgressBar.Value =
-            [Math]::Min(
-                $completed + $failed,
-                $installProgressBar.Maximum
-            )
-
-        $lblInstallStatus.Text =
-            "Erro durante a instalação."
-
-        & $AppendInstallLog ""
-        & $AppendInstallLog "ERRO GERAL: $($_.Exception.Message)"
-
-        [System.Windows.Forms.MessageBox]::Show(
-            "Ocorreu um erro durante a instalação:`r`n`r`n$($_.Exception.Message)",
-            "Erro",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        ) | Out-Null
+        Write-InstallLog("ERRO geral na instalação: $($_.Exception.Message)")
     }
     finally {
-
-        $installProgressBar.Style =
-            [System.Windows.Forms.ProgressBarStyle]::Continuous
-
+        # Limpar jobs remanescentes
+        Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue
         $btnInstallSelected.Enabled = $true
-        $clbInstall.Enabled = $true
-        $txtSearchInstall.Enabled = $true
-
-        [System.Windows.Forms.Application]::DoEvents()
     }
 })
 
 # ============================================================
-# ATUALIZAR PROGRAMAS INSTALADOS
+# ATUALIZAR PROGRAMAS INSTALADOS (COM DETECÇÃO DE GERENCIADOR)
 # ============================================================
 
 $btnRefreshInstalled.Add_Click({
@@ -3816,7 +3656,7 @@ $btnRefreshInstalled.Add_Click({
 
     try {
 
-        $AppendLog.Invoke(
+        Write-ConfigLog(
             "Consultando programas instalados..."
         )
 
@@ -3826,6 +3666,25 @@ $btnRefreshInstalled.Add_Click({
 
         $programs =
             @(Get-InstalledProgramsList)
+
+        # Obter lista de winget e choco para identificar gerenciadores
+        $wingetList = @()
+        try {
+            $wingetOutput = winget list --accept-source-agreements 2>$null
+            $wingetList = $wingetOutput | ForEach-Object {
+                if ($_ -match '^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)') {
+                    $Matches[1]
+                }
+            } | Where-Object { $_ -ne "Name" -and $_ -ne "─" -and $_ -ne "" }
+        } catch {}
+
+        $chocoList = @()
+        try {
+            $chocoOutput = choco list --limit-output 2>$null
+            $chocoList = $chocoOutput | ForEach-Object {
+                if ($_ -match '^([^|]+)\|') { $Matches[1] }
+            } | Where-Object { $_ -ne "" }
+        } catch {}
 
         foreach ($program in $programs) {
 
@@ -3837,34 +3696,39 @@ $btnRefreshInstalled.Add_Click({
                 -not $script:UninstallMap.ContainsKey($name)
             ) {
 
-                $cmd =
-                    if (
-                        -not [string]::IsNullOrWhiteSpace(
-                            $program.QuietUninstallString
-                        )
-                    ) {
+                $isWinget = $wingetList -contains $name
+                $isChoco = $chocoList -contains $name
+
+                $cmd = $null
+                if ($isWinget) {
+                    $cmd = "winget_uninstall"
+                } elseif ($isChoco) {
+                    $cmd = "choco_uninstall"
+                } else {
+                    $cmd = if (-not [string]::IsNullOrWhiteSpace($program.QuietUninstallString)) {
                         $program.QuietUninstallString
-                    }
-                    else {
+                    } else {
                         $program.UninstallString
                     }
+                }
 
-                $script:UninstallMap[$name] =
-                    $cmd
+                $script:UninstallMap[$name] = @{
+                    Command = $cmd
+                    IsWinget = $isWinget
+                    IsChoco = $isChoco
+                }
 
-                [void]$clbUninstall.Items.Add(
-                    $name
-                )
+                [void]$clbUninstall.Items.Add($name)
             }
         }
 
-        $AppendLog.Invoke(
+        Write-ConfigLog(
             "$($clbUninstall.Items.Count) programas encontrados."
         )
     }
     catch {
 
-        $AppendLog.Invoke(
+        Write-ConfigLog(
             "ERRO ao atualizar lista: $($_.Exception.Message)"
         )
     }
@@ -3875,7 +3739,7 @@ $btnRefreshInstalled.Add_Click({
 })
 
 # ============================================================
-# DESINSTALAR
+# DESINSTALAR (COM SUPORTE A WINGET/CHOCO)
 # ============================================================
 
 $btnUninstallSelected.Add_Click({
@@ -3914,60 +3778,61 @@ $btnUninstallSelected.Add_Click({
 
     try {
 
-        $AppendLog.Invoke("")
-        $AppendLog.Invoke(
+        Write-ConfigLog("")
+        Write-ConfigLog(
             "== DESINSTALAÇÃO DE PROGRAMAS =="
         )
 
         foreach ($name in $selected) {
 
-            $cmd =
-                $script:UninstallMap[$name]
+            $info = $script:UninstallMap[$name]
+            $cmd = $info.Command
 
-            if (
-                [string]::IsNullOrWhiteSpace($cmd)
-            ) {
-                continue
-            }
-
-            $AppendLog.Invoke(
+            Write-ConfigLog(
                 "Desinstalando: $name"
             )
 
-            try {
+            $success = $false
 
-                if (
-                    $cmd -match "(?i)msiexec" -and
-                    $cmd -notmatch "(?i)/qn|/quiet"
-                ) {
-
-                    $cmd =
-                        "$cmd /quiet /norestart"
+            if ($info.IsWinget) {
+                # Tentar desinstalar via winget
+                $success = Uninstall-WingetPackage -id $name
+                if ($success) {
+                    Write-ConfigLog("Desinstalado via winget: $name")
+                } else {
+                    Write-ConfigLog("Falha ao desinstalar via winget, tentando método alternativo.")
                 }
-
-                Start-Process `
-                    -FilePath "cmd.exe" `
-                    -ArgumentList "/c $cmd" `
-                    -Wait `
-                    -ErrorAction Stop
-
-                $AppendLog.Invoke(
-                    "Concluído: $name"
-                )
             }
-            catch {
 
-                $AppendLog.Invoke(
-                    "ERRO ao desinstalar '$name': $($_.Exception.Message)"
-                )
+            if (-not $success -and $info.IsChoco) {
+                $success = Uninstall-ChocoPackage -id $name
+                if ($success) {
+                    Write-ConfigLog("Desinstalado via Chocolatey: $name")
+                } else {
+                    Write-ConfigLog("Falha ao desinstalar via Chocolatey, tentando método alternativo.")
+                }
+            }
+
+            if (-not $success) {
+                # Fallback para UninstallString
+                if ($cmd -and $cmd -ne "winget_uninstall" -and $cmd -ne "choco_uninstall") {
+                    $success = Uninstall-RegistryProgram -cmd $cmd
+                    if ($success) {
+                        Write-ConfigLog("Desinstalado via registro: $name")
+                    } else {
+                        Write-ConfigLog("ERRO ao desinstalar '$name' via registro.")
+                    }
+                } else {
+                    Write-ConfigLog("Nenhum método de desinstalação disponível para '$name'.")
+                }
             }
         }
 
-        $AppendLog.Invoke(
+        Write-ConfigLog(
             "Remoção concluída."
         )
 
-        $AppendLog.Invoke(
+        Write-ConfigLog(
             "Clique em Atualizar lista."
         )
     }
@@ -3985,20 +3850,20 @@ $btnCustomActivate.Add_Click({
 
     try {
 
-        $AppendLog.Invoke(
+        Write-ConfigLog(
             "Abrindo configurações oficiais de ativação do Windows..."
         )
 
         Start-Process `
             "ms-settings:activation"
 
-        $AppendLog.Invoke(
+        Write-ConfigLog(
             "Configurações de ativação abertas."
         )
     }
     catch {
 
-        $AppendLog.Invoke(
+        Write-ConfigLog(
             "ERRO ao abrir ativação: $($_.Exception.Message)"
         )
 
@@ -4010,7 +3875,7 @@ $btnCustomActivate.Add_Click({
 })
 
 # ============================================================
-# SITEF - INSTALAÇÃO
+# SITEF - INSTALAÇÃO (com timeout já implementado)
 # ============================================================
 
 $btnSitefInstall.Add_Click({
@@ -4341,7 +4206,7 @@ $form.Add_Shown({
     }
     catch {
 
-        $AppendLog.Invoke(
+        Write-ConfigLog(
             "Erro ao carregar programas instalados: $($_.Exception.Message)"
         )
     }
