@@ -565,7 +565,7 @@ $form.BackColor = $ColorBackground
 $form.Font = $FontNormal
 $form.AutoSize = $true
 $form.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
-$form.MinimumSize = New-Object System.Drawing.Size(600, 400)
+$form.MinimumSize = New-Object System.Drawing.Size(600, 700)
 
 # ----- Painel principal -----
 $mainPanel = New-Object System.Windows.Forms.Panel
