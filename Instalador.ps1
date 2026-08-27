@@ -2,6 +2,7 @@
     ProvisioningTool.ps1
     Interface com abas separadas para cada função.
     Layout automático com FlowLayoutPanel – sem coordenadas fixas.
+    Inclui botões DLL_FLY e DLL_FLY_EMBARCADO na aba SITEF.
 #>
 
 # ============================================================
@@ -96,10 +97,13 @@ function Step-VersoesAnteriores {
     } catch {
         $Log.Invoke("Aviso ao ativar System Restore: $($_.Exception.Message)")
     }
+
     $Log.Invoke("Reservando espaco para copias de sombra (10% do volume)...")
     vssadmin resize shadowstorage /for="$drive" /on="$drive" /maxsize=10% 2>&1 | ForEach-Object { $Log.Invoke($_) }
+
     $Log.Invoke("Criando snapshot inicial...")
     vssadmin create shadow /for="$drive" 2>&1 | ForEach-Object { $Log.Invoke($_) }
+
     schtasks /create /tn "VersoesAnteriores_ShadowCopy" /tr "vssadmin create shadow /for=$drive" /sc hourly /mo 4 /ru "SYSTEM" /rl highest /f | Out-Null
     $Log.Invoke("Tarefa agendada 'VersoesAnteriores_ShadowCopy' criada (snapshot a cada 4h).")
     $Log.Invoke("A partir do proximo snapshot, a aba 'Versoes Anteriores' nas propriedades de pastas em $drive vai mostrar as copias.")
@@ -266,7 +270,7 @@ function Get-InstalledProgramsList {
 }
 
 # ============================================================
-#  FUNÇÃO DE INSTALAÇÃO SITEF
+#  FUNÇÃO DE INSTALAÇÃO SITEF (COMPLETA)
 # ============================================================
 function Install-Sitef {
     $log = $script:SitefLogDelegate
@@ -415,6 +419,121 @@ function Install-Sitef {
     $log.Invoke("=== INSTALAÇÃO SITEF CONCLUÍDA ===")
     $progressSitef.Value = $progressSitef.Maximum
     [System.Windows.Forms.MessageBox]::Show("Instalação SITEF concluída! Verifique o log para detalhes.", "SITEF")
+}
+
+# ============================================================
+#  NOVAS FUNÇÕES: DOWNLOAD DLL_FLY E DLL_FLY_EMBARCADO
+# ============================================================
+function Download-DllFly {
+    $log = $script:SitefLogDelegate
+    $log.Invoke("=== BAIXANDO DLL_FLY ===")
+    $log.Invoke("")
+
+    $baseDir = "C:\SITEF"
+    $targetDir = Join-Path $baseDir "DLL_FLY"
+    $zipUrl = "https://github.com/c1000x/InstaladorMCNTV/raw/a4dbdb2b2fbbea02d3d4109220199490e4e9e1bf/DLL_FLY.zip"
+    $zipFile = Join-Path $baseDir "DLL_FLY.zip"
+
+    # Criar pasta destino
+    if (-not (Test-Path $targetDir)) {
+        $log.Invoke("Criando diretório $targetDir ...")
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        $log.Invoke("Diretório criado.")
+    }
+
+    # Baixar o ZIP
+    $log.Invoke("Baixando DLL_FLY.zip (11.6 MB) ...")
+    try {
+        $webClient = New-Object System.Net.WebClient
+        $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        $webClient.DownloadFile($zipUrl, $zipFile)
+        $log.Invoke("Download concluído: $zipFile")
+    } catch {
+        $log.Invoke("ERRO ao baixar DLL_FLY.zip: $($_.Exception.Message)")
+        return
+    }
+
+    # Extrair para a pasta DLL_FLY
+    $log.Invoke("Extraindo DLL_FLY.zip para $targetDir ...")
+    try {
+        Expand-Archive -Path $zipFile -DestinationPath $targetDir -Force
+        $log.Invoke("Extraído com sucesso.")
+    } catch {
+        $log.Invoke("ERRO ao extrair DLL_FLY.zip: $($_.Exception.Message)")
+        $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
+        try {
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $targetDir, $true)
+            $log.Invoke("Extraído com sucesso via fallback.")
+        } catch {
+            $log.Invoke("Falha na extração: $($_.Exception.Message)")
+            return
+        }
+    }
+
+    # Remover o ZIP após extração
+    Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+    $log.Invoke("Arquivo ZIP removido.")
+
+    $log.Invoke("")
+    $log.Invoke("=== DLL_FLY INSTALADO COM SUCESSO ===")
+    $progressSitef.Value = 100
+    [System.Windows.Forms.MessageBox]::Show("DLL_FLY baixado e extraído com sucesso em:`n$targetDir", "DLL_FLY")
+}
+
+function Download-DllFlyEmbarcado {
+    $log = $script:SitefLogDelegate
+    $log.Invoke("=== BAIXANDO DLL_FLY_EMBARCADO ===")
+    $log.Invoke("")
+
+    $baseDir = "C:\SITEF"
+    $targetDir = Join-Path $baseDir "DLL_FLY_EMBARCADO"
+    $zipUrl = "https://github.com/c1000x/InstaladorMCNTV/raw/a4dbdb2b2fbbea02d3d4109220199490e4e9e1bf/DLL_FLY_EMBARCADO.zip"
+    $zipFile = Join-Path $baseDir "DLL_FLY_EMBARCADO.zip"
+
+    # Criar pasta destino
+    if (-not (Test-Path $targetDir)) {
+        $log.Invoke("Criando diretório $targetDir ...")
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        $log.Invoke("Diretório criado.")
+    }
+
+    # Baixar o ZIP
+    $log.Invoke("Baixando DLL_FLY_EMBARCADO.zip (11.6 MB) ...")
+    try {
+        $webClient = New-Object System.Net.WebClient
+        $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        $webClient.DownloadFile($zipUrl, $zipFile)
+        $log.Invoke("Download concluído: $zipFile")
+    } catch {
+        $log.Invoke("ERRO ao baixar DLL_FLY_EMBARCADO.zip: $($_.Exception.Message)")
+        return
+    }
+
+    # Extrair para a pasta DLL_FLY_EMBARCADO
+    $log.Invoke("Extraindo DLL_FLY_EMBARCADO.zip para $targetDir ...")
+    try {
+        Expand-Archive -Path $zipFile -DestinationPath $targetDir -Force
+        $log.Invoke("Extraído com sucesso.")
+    } catch {
+        $log.Invoke("ERRO ao extrair DLL_FLY_EMBARCADO.zip: $($_.Exception.Message)")
+        $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
+        try {
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $targetDir, $true)
+            $log.Invoke("Extraído com sucesso via fallback.")
+        } catch {
+            $log.Invoke("Falha na extração: $($_.Exception.Message)")
+            return
+        }
+    }
+
+    # Remover o ZIP após extração
+    Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+    $log.Invoke("Arquivo ZIP removido.")
+
+    $log.Invoke("")
+    $log.Invoke("=== DLL_FLY_EMBARCADO INSTALADO COM SUCESSO ===")
+    $progressSitef.Value = 100
+    [System.Windows.Forms.MessageBox]::Show("DLL_FLY_EMBARCADO baixado e extraído com sucesso em:`n$targetDir", "DLL_FLY_EMBARCADO")
 }
 
 # ============================================================
@@ -678,7 +797,7 @@ $btnCustom.Margin = New-Object System.Windows.Forms.Padding(3, 10, 3, 3)
 $flowUninstall.Controls.Add($btnCustom)
 
 # ============================================================
-#  ABA 4: SITEF
+#  ABA 4: SITEF (COM BOTÕES DLL_FLY E DLL_FLY_EMBARCADO)
 # ============================================================
 $tabSitef = New-Object System.Windows.Forms.TabPage
 $tabSitef.Text = "SITEF"
@@ -704,13 +823,15 @@ $flowSitef.Controls.Add($lblSitefTitle)
 $lblSitefDesc = New-Object System.Windows.Forms.Label
 $lblSitefDesc.Text = "Esta etapa irá baixar, extrair e executar os instaladores do SITEF.`n" +
                      "Após a execução, você deverá configurar manualmente os programas.`n" +
-                     "Ao fechar os instaladores, o serviço 'GSurfRSA Listener' será iniciado."
+                     "Ao fechar os instaladores, o serviço 'GSurfRSA Listener' será iniciado." +
+                     "`n`nOs botões abaixo baixam e extraem os pacotes DLL_FLY e DLL_FLY_EMBARCADO."
 $lblSitefDesc.Font = $FontNormal
 $lblSitefDesc.ForeColor = $ColorMuted
 $lblSitefDesc.AutoSize = $true
 $lblSitefDesc.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 10)
 $flowSitef.Controls.Add($lblSitefDesc)
 
+# --- BOTÃO: Instalar SITEF (existente) ---
 $btnSitefInstall = New-Object System.Windows.Forms.Button
 $btnSitefInstall.Text = "Instalar SITEF"
 $btnSitefInstall.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
@@ -722,6 +843,31 @@ $btnSitefInstall.AutoSize = $true
 $btnSitefInstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
 $flowSitef.Controls.Add($btnSitefInstall)
 
+# --- BOTÃO: DLL_FLY (NOVO) ---
+$btnDllFly = New-Object System.Windows.Forms.Button
+$btnDllFly.Text = "DLL_FLY"
+$btnDllFly.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+$btnDllFly.BackColor = $ColorPrimary
+$btnDllFly.ForeColor = [System.Drawing.Color]::White
+$btnDllFly.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnDllFly.FlatAppearance.BorderSize = 0
+$btnDllFly.AutoSize = $true
+$btnDllFly.Margin = New-Object System.Windows.Forms.Padding(3, 5, 3, 5)
+$flowSitef.Controls.Add($btnDllFly)
+
+# --- BOTÃO: DLL_FLY_EMBARCADO (NOVO) ---
+$btnDllFlyEmbarcado = New-Object System.Windows.Forms.Button
+$btnDllFlyEmbarcado.Text = "DLL_FLY_EMBARCADO"
+$btnDllFlyEmbarcado.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+$btnDllFlyEmbarcado.BackColor = $ColorPrimary
+$btnDllFlyEmbarcado.ForeColor = [System.Drawing.Color]::White
+$btnDllFlyEmbarcado.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnDllFlyEmbarcado.FlatAppearance.BorderSize = 0
+$btnDllFlyEmbarcado.AutoSize = $true
+$btnDllFlyEmbarcado.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 10)
+$flowSitef.Controls.Add($btnDllFlyEmbarcado)
+
+# --- BOTÃO: Abrir pasta (existente) ---
 $btnSitefOpenFolder = New-Object System.Windows.Forms.Button
 $btnSitefOpenFolder.Text = "Abrir pasta C:\SITEF"
 $btnSitefOpenFolder.Font = $FontButton
@@ -732,14 +878,16 @@ $btnSitefOpenFolder.AutoSize = $true
 $btnSitefOpenFolder.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 10)
 $flowSitef.Controls.Add($btnSitefOpenFolder)
 
+# Progresso
 $progressSitef = New-Object System.Windows.Forms.ProgressBar
 $progressSitef.Height = 20
-$progressSitef.Width = 400
+$progressSitef.Width = 500
 $progressSitef.Minimum = 0
 $progressSitef.Maximum = 100
 $progressSitef.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
 $flowSitef.Controls.Add($progressSitef)
 
+# Log
 $lblSitefLog = New-Object System.Windows.Forms.Label
 $lblSitefLog.Text = "Log da instalação SITEF:"
 $lblSitefLog.Font = $FontNormal
@@ -753,7 +901,7 @@ $txtSitefLog.Multiline = $true
 $txtSitefLog.ScrollBars = "Vertical"
 $txtSitefLog.ReadOnly = $true
 $txtSitefLog.Height = 200
-$txtSitefLog.Width = 500
+$txtSitefLog.Width = 600
 $txtSitefLog.Font = New-Object System.Drawing.Font("Consolas", 8)
 $txtSitefLog.BackColor = [System.Drawing.Color]::White
 $txtSitefLog.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 3)
@@ -830,8 +978,10 @@ $script:SitefLogDelegate = {
 }
 
 # ============================================================
-#  EVENTOS DOS BOTÕES (os mesmos de antes, adaptados)
+#  EVENTOS DOS BOTÕES (TODOS)
 # ============================================================
+
+# --- Evento: Executar configuração ---
 $btnRun.Add_Click({
     $btnRun.Enabled = $false
     $btnSelAll.Enabled = $false
@@ -892,6 +1042,7 @@ $btnRun.Add_Click({
     [System.Windows.Forms.MessageBox]::Show("Provisionamento concluido. Relatorio em:`n$ReportPath", "Finalizado")
 })
 
+# --- Evento: Instalar selecionados (paralelo) ---
 $btnInstallSelected.Add_Click({
     $selectedLabels = @($clbInstall.CheckedItems)
     if ($selectedLabels.Count -eq 0) {
@@ -974,6 +1125,7 @@ $btnInstallSelected.Add_Click({
     $btnInstallSelected.Enabled = $true
 })
 
+# --- Evento: Ativar Windows (personalizado) ---
 $btnCustom.Add_Click({
     if ([string]::IsNullOrWhiteSpace($CustomScriptUrl) -or $CustomScriptUrl -like "*usuario/repositorio*") {
         [System.Windows.Forms.MessageBox]::Show("Edite as variaveis `$CustomScriptUrl e `$CustomScriptLabel no topo do ProvisioningTool.ps1 antes de usar este botao.", "Configure o link")
@@ -1007,6 +1159,7 @@ $btnCustom.Add_Click({
     $btnCustom.Enabled = $true
 })
 
+# --- Evento: Atualizar lista de instalados ---
 $script:UninstallMap = @{}
 $btnRefreshInstalled.Add_Click({
     $btnRefreshInstalled.Enabled = $false
@@ -1025,6 +1178,7 @@ $btnRefreshInstalled.Add_Click({
     $btnRefreshInstalled.Enabled = $true
 })
 
+# --- Evento: Desinstalar selecionados ---
 $btnUninstallSelected.Add_Click({
     $selected = @($clbUninstall.CheckedItems)
     if ($selected.Count -eq 0) {
@@ -1060,6 +1214,7 @@ $btnUninstallSelected.Add_Click({
     $btnUninstallSelected.Enabled = $true
 })
 
+# --- Evento: Instalar SITEF (completo) ---
 $btnSitefInstall.Add_Click({
     $btnSitefInstall.Enabled = $false
     $txtSitefLog.Clear()
@@ -1072,6 +1227,33 @@ $btnSitefInstall.Add_Click({
     $btnSitefInstall.Enabled = $true
 })
 
+# --- Evento: DLL_FLY ---
+$btnDllFly.Add_Click({
+    $btnDllFly.Enabled = $false
+    $txtSitefLog.Clear()
+    $progressSitef.Value = 0
+    try {
+        Download-DllFly
+    } catch {
+        $txtSitefLog.AppendText("ERRO inesperado: $($_.Exception.Message)`r`n")
+    }
+    $btnDllFly.Enabled = $true
+})
+
+# --- Evento: DLL_FLY_EMBARCADO ---
+$btnDllFlyEmbarcado.Add_Click({
+    $btnDllFlyEmbarcado.Enabled = $false
+    $txtSitefLog.Clear()
+    $progressSitef.Value = 0
+    try {
+        Download-DllFlyEmbarcado
+    } catch {
+        $txtSitefLog.AppendText("ERRO inesperado: $($_.Exception.Message)`r`n")
+    }
+    $btnDllFlyEmbarcado.Enabled = $true
+})
+
+# --- Evento: Abrir pasta C:\SITEF ---
 $btnSitefOpenFolder.Add_Click({
     $sitefDir = "C:\SITEF"
     if (Test-Path $sitefDir) {
