@@ -2,7 +2,7 @@
     ProvisioningTool.ps1
     Interface com abas separadas para cada função.
     Layout automático com FlowLayoutPanel – sem coordenadas fixas.
-    Inclui botões DLL_FLY e DLL_FLY_EMBARCADO na aba SITEF.
+    Inclui botões DLL_FLY e DLL_FLY_EMBARCADO com exclusão automática no Windows Defender.
 #>
 
 # ============================================================
@@ -152,27 +152,24 @@ function Step-RegiaoIdioma {
     $Log.Invoke("== Fuso horario e localizacao (Brasil) ==")
     if ($DryRun) { $Log.Invoke("[SIMULACAO] Definiria fuso horario de Brasilia e localizacao Brasil."); return }
     try {
-        # Define o fuso horário (sempre funciona)
         Set-TimeZone -Id "E. South America Standard Time" -ErrorAction Stop
         $Log.Invoke("Fuso horario (Brasilia) definido com sucesso.")
     } catch {
         $Log.Invoke("Aviso: não foi possível definir o fuso horário: $($_.Exception.Message)")
     }
 
-    # Tenta definir a localização (pode falhar em algumas versões do Windows)
     try {
         Set-WinHomeLocation -GeoId 76 -ErrorAction Stop
         $Log.Invoke("Localização (Brasil) definida com sucesso.")
     } catch {
         $Log.Invoke("Aviso: não foi possível definir a localização (GeoId 76). Isso é comum em edições sem suporte a idiomas adicionais. O fuso horário já foi ajustado.")
-        # Fallback: definir a localização pelo nome (se disponível)
         try {
             Set-WinHomeLocation -GeoId 76 -ErrorAction SilentlyContinue
         } catch {
             # Ignora o erro e continua
         }
     }
-    $Log.Invoke("Configuração de região concluída (possíveis avisos são normais).")
+    $Log.Invoke("Configuração de região concluída.")
 }
 
 function Step-Debloat {
@@ -437,7 +434,7 @@ function Install-Sitef {
 }
 
 # ============================================================
-#  NOVAS FUNÇÕES: DOWNLOAD DLL_FLY E DLL_FLY_EMBARCADO
+#  FUNÇÕES: DOWNLOAD DLL_FLY E DLL_FLY_EMBARCADO (COM EXCLUSÃO NO WINDOWS DEFENDER)
 # ============================================================
 function Download-DllFly {
     $log = $script:SitefLogDelegate
@@ -489,10 +486,20 @@ function Download-DllFly {
     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
     $log.Invoke("Arquivo ZIP removido.")
 
+    # --- ADICIONAR EXCLUSÃO NO WINDOWS DEFENDER ---
+    $log.Invoke("Adicionando exclusão no Windows Defender para: $targetDir")
+    try {
+        Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
+        $log.Invoke("Exclusão adicionada com sucesso.")
+    } catch {
+        $log.Invoke("Aviso: não foi possível adicionar exclusão no Windows Defender: $($_.Exception.Message)")
+        $log.Invoke("Verifique se o Windows Defender está ativo ou se você tem permissões de administrador.")
+    }
+
     $log.Invoke("")
     $log.Invoke("=== DLL_FLY INSTALADO COM SUCESSO ===")
     $progressSitef.Value = 100
-    [System.Windows.Forms.MessageBox]::Show("DLL_FLY baixado e extraído com sucesso em:`n$targetDir", "DLL_FLY")
+    [System.Windows.Forms.MessageBox]::Show("DLL_FLY baixado, extraído e adicionado à exclusão do Windows Defender com sucesso em:`n$targetDir", "DLL_FLY")
 }
 
 function Download-DllFlyEmbarcado {
@@ -545,14 +552,24 @@ function Download-DllFlyEmbarcado {
     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
     $log.Invoke("Arquivo ZIP removido.")
 
+    # --- ADICIONAR EXCLUSÃO NO WINDOWS DEFENDER ---
+    $log.Invoke("Adicionando exclusão no Windows Defender para: $targetDir")
+    try {
+        Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
+        $log.Invoke("Exclusão adicionada com sucesso.")
+    } catch {
+        $log.Invoke("Aviso: não foi possível adicionar exclusão no Windows Defender: $($_.Exception.Message)")
+        $log.Invoke("Verifique se o Windows Defender está ativo ou se você tem permissões de administrador.")
+    }
+
     $log.Invoke("")
     $log.Invoke("=== DLL_FLY_EMBARCADO INSTALADO COM SUCESSO ===")
     $progressSitef.Value = 100
-    [System.Windows.Forms.MessageBox]::Show("DLL_FLY_EMBARCADO baixado e extraído com sucesso em:`n$targetDir", "DLL_FLY_EMBARCADO")
+    [System.Windows.Forms.MessageBox]::Show("DLL_FLY_EMBARCADO baixado, extraído e adicionado à exclusão do Windows Defender com sucesso em:`n$targetDir", "DLL_FLY_EMBARCADO")
 }
 
 # ============================================================
-#  INTERFACE GRAFICA COM ABAS SEPARADAS E LAYOUT AUTOMÁTICO
+#  INTERFACE GRAFICA (ABAS SEPARADAS)
 # ============================================================
 $ColorBackground = [System.Drawing.Color]::FromArgb(245,247,250)
 $ColorSurface    = [System.Drawing.Color]::White
@@ -569,7 +586,7 @@ $FontHeader = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
 $FontTitle  = New-Object System.Drawing.Font("Segoe UI Semibold", 18)
 $FontButton = New-Object System.Drawing.Font("Segoe UI", 9)
 
-# ----- Formulário principal com AutoSize -----
+# ----- Formulário principal -----
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "MCNTV Installer - Provisionamento Windows"
 $form.StartPosition = "CenterScreen"
@@ -589,7 +606,7 @@ $mainPanel.AutoSize = $true
 $mainPanel.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
 $form.Controls.Add($mainPanel)
 
-# ----- TabControl (cada aba é uma função) -----
+# ----- TabControl -----
 $tabControl = New-Object System.Windows.Forms.TabControl
 $tabControl.Dock = [System.Windows.Forms.DockStyle]::Fill
 $tabControl.Font = $FontNormal
@@ -633,7 +650,7 @@ foreach ($key in $steps.Keys) {
     $cb.Font = $FontNormal
     $cb.ForeColor = $ColorText
     $cb.AutoSize = $true
-    $cb.Margin = New-Object System.Windows.Forms.Padding(3, 3, 3, 0)
+    $cb.Margin = New-Object System.Windows.Forms.Padding(3, 2, 3, 0)
     $flowConfig.Controls.Add($cb)
     $checkboxes[$key] = $cb
 }
@@ -643,7 +660,7 @@ $chkDryRun.Text = "Modo Simulacao (dry-run)"
 $chkDryRun.Font = $FontNormal
 $chkDryRun.ForeColor = [System.Drawing.Color]::DarkBlue
 $chkDryRun.AutoSize = $true
-$chkDryRun.Margin = New-Object System.Windows.Forms.Padding(3, 10, 3, 5)
+$chkDryRun.Margin = New-Object System.Windows.Forms.Padding(3, 8, 3, 5)
 $flowConfig.Controls.Add($chkDryRun)
 
 $btnSelAll = New-Object System.Windows.Forms.Button
@@ -676,7 +693,7 @@ $btnRun.ForeColor = [System.Drawing.Color]::White
 $btnRun.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnRun.FlatAppearance.BorderSize = 0
 $btnRun.AutoSize = $true
-$btnRun.Margin = New-Object System.Windows.Forms.Padding(3, 10, 3, 3)
+$btnRun.Margin = New-Object System.Windows.Forms.Padding(3, 8, 3, 3)
 $flowConfig.Controls.Add($btnRun)
 
 # ============================================================
@@ -712,7 +729,7 @@ $flowInstall.Controls.Add($txtSearchInstall)
 $clbInstall = New-Object System.Windows.Forms.CheckedListBox
 $clbInstall.CheckOnClick = $true
 $clbInstall.Font = $FontNormal
-$clbInstall.Height = 200
+$clbInstall.Height = 250
 $clbInstall.Width = 350
 $clbInstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
 $allLabels = Build-AppCatalogLabels
@@ -745,7 +762,7 @@ $btnInstallSelected.ForeColor = [System.Drawing.Color]::White
 $btnInstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnInstallSelected.FlatAppearance.BorderSize = 0
 $btnInstallSelected.AutoSize = $true
-$btnInstallSelected.Margin = New-Object System.Windows.Forms.Padding(3, 10, 3, 3)
+$btnInstallSelected.Margin = New-Object System.Windows.Forms.Padding(3, 8, 3, 3)
 $flowInstall.Controls.Add($btnInstallSelected)
 
 # ============================================================
@@ -775,7 +792,7 @@ $flowUninstall.Controls.Add($lblUninstallInfo)
 $clbUninstall = New-Object System.Windows.Forms.CheckedListBox
 $clbUninstall.CheckOnClick = $true
 $clbUninstall.Font = $FontNormal
-$clbUninstall.Height = 200
+$clbUninstall.Height = 250
 $clbUninstall.Width = 350
 $clbUninstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
 $flowUninstall.Controls.Add($clbUninstall)
@@ -808,11 +825,11 @@ $btnCustom.BackColor = $ColorSurface
 $btnCustom.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnCustom.FlatAppearance.BorderColor = $ColorBorder
 $btnCustom.AutoSize = $true
-$btnCustom.Margin = New-Object System.Windows.Forms.Padding(3, 10, 3, 3)
+$btnCustom.Margin = New-Object System.Windows.Forms.Padding(3, 8, 3, 3)
 $flowUninstall.Controls.Add($btnCustom)
 
 # ============================================================
-#  ABA 4: SITEF (COM BOTÕES DLL_FLY E DLL_FLY_EMBARCADO)
+#  ABA 4: SITEF
 # ============================================================
 $tabSitef = New-Object System.Windows.Forms.TabPage
 $tabSitef.Text = "SITEF"
@@ -839,14 +856,14 @@ $lblSitefDesc = New-Object System.Windows.Forms.Label
 $lblSitefDesc.Text = "Esta etapa irá baixar, extrair e executar os instaladores do SITEF.`n" +
                      "Após a execução, você deverá configurar manualmente os programas.`n" +
                      "Ao fechar os instaladores, o serviço 'GSurfRSA Listener' será iniciado." +
-                     "`n`nOs botões abaixo baixam e extraem os pacotes DLL_FLY e DLL_FLY_EMBARCADO."
+                     "`n`nOs botões abaixo baixam e extraem os pacotes DLL_FLY e DLL_FLY_EMBARCADO.`n" +
+                     "As pastas serão automaticamente adicionadas à exclusão do Windows Defender."
 $lblSitefDesc.Font = $FontNormal
 $lblSitefDesc.ForeColor = $ColorMuted
 $lblSitefDesc.AutoSize = $true
 $lblSitefDesc.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 10)
 $flowSitef.Controls.Add($lblSitefDesc)
 
-# --- BOTÃO: Instalar SITEF (existente) ---
 $btnSitefInstall = New-Object System.Windows.Forms.Button
 $btnSitefInstall.Text = "Instalar SITEF"
 $btnSitefInstall.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
@@ -858,7 +875,6 @@ $btnSitefInstall.AutoSize = $true
 $btnSitefInstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
 $flowSitef.Controls.Add($btnSitefInstall)
 
-# --- BOTÃO: DLL_FLY (NOVO) ---
 $btnDllFly = New-Object System.Windows.Forms.Button
 $btnDllFly.Text = "DLL_FLY"
 $btnDllFly.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
@@ -870,7 +886,6 @@ $btnDllFly.AutoSize = $true
 $btnDllFly.Margin = New-Object System.Windows.Forms.Padding(3, 5, 3, 5)
 $flowSitef.Controls.Add($btnDllFly)
 
-# --- BOTÃO: DLL_FLY_EMBARCADO (NOVO) ---
 $btnDllFlyEmbarcado = New-Object System.Windows.Forms.Button
 $btnDllFlyEmbarcado.Text = "DLL_FLY_EMBARCADO"
 $btnDllFlyEmbarcado.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
@@ -882,7 +897,6 @@ $btnDllFlyEmbarcado.AutoSize = $true
 $btnDllFlyEmbarcado.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 10)
 $flowSitef.Controls.Add($btnDllFlyEmbarcado)
 
-# --- BOTÃO: Abrir pasta (existente) ---
 $btnSitefOpenFolder = New-Object System.Windows.Forms.Button
 $btnSitefOpenFolder.Text = "Abrir pasta C:\SITEF"
 $btnSitefOpenFolder.Font = $FontButton
@@ -893,7 +907,6 @@ $btnSitefOpenFolder.AutoSize = $true
 $btnSitefOpenFolder.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 10)
 $flowSitef.Controls.Add($btnSitefOpenFolder)
 
-# Progresso
 $progressSitef = New-Object System.Windows.Forms.ProgressBar
 $progressSitef.Height = 20
 $progressSitef.Width = 500
@@ -902,7 +915,6 @@ $progressSitef.Maximum = 100
 $progressSitef.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
 $flowSitef.Controls.Add($progressSitef)
 
-# Log
 $lblSitefLog = New-Object System.Windows.Forms.Label
 $lblSitefLog.Text = "Log da instalação SITEF:"
 $lblSitefLog.Font = $FontNormal
@@ -923,7 +935,7 @@ $txtSitefLog.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 3)
 $flowSitef.Controls.Add($txtSitefLog)
 
 # ============================================================
-#  STATUS (painel inferior fixo) – visível em todas as abas
+#  STATUS
 # ============================================================
 $statusPanel = New-Object System.Windows.Forms.Panel
 $statusPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
@@ -993,10 +1005,9 @@ $script:SitefLogDelegate = {
 }
 
 # ============================================================
-#  EVENTOS DOS BOTÕES (TODOS)
+#  EVENTOS DOS BOTÕES
 # ============================================================
 
-# --- Evento: Executar configuração ---
 $btnRun.Add_Click({
     $btnRun.Enabled = $false
     $btnSelAll.Enabled = $false
@@ -1057,7 +1068,6 @@ $btnRun.Add_Click({
     [System.Windows.Forms.MessageBox]::Show("Provisionamento concluido. Relatorio em:`n$ReportPath", "Finalizado")
 })
 
-# --- Evento: Instalar selecionados (paralelo) ---
 $btnInstallSelected.Add_Click({
     $selectedLabels = @($clbInstall.CheckedItems)
     if ($selectedLabels.Count -eq 0) {
@@ -1140,7 +1150,6 @@ $btnInstallSelected.Add_Click({
     $btnInstallSelected.Enabled = $true
 })
 
-# --- Evento: Ativar Windows (personalizado) ---
 $btnCustom.Add_Click({
     if ([string]::IsNullOrWhiteSpace($CustomScriptUrl) -or $CustomScriptUrl -like "*usuario/repositorio*") {
         [System.Windows.Forms.MessageBox]::Show("Edite as variaveis `$CustomScriptUrl e `$CustomScriptLabel no topo do ProvisioningTool.ps1 antes de usar este botao.", "Configure o link")
@@ -1174,7 +1183,6 @@ $btnCustom.Add_Click({
     $btnCustom.Enabled = $true
 })
 
-# --- Evento: Atualizar lista de instalados ---
 $script:UninstallMap = @{}
 $btnRefreshInstalled.Add_Click({
     $btnRefreshInstalled.Enabled = $false
@@ -1193,7 +1201,6 @@ $btnRefreshInstalled.Add_Click({
     $btnRefreshInstalled.Enabled = $true
 })
 
-# --- Evento: Desinstalar selecionados ---
 $btnUninstallSelected.Add_Click({
     $selected = @($clbUninstall.CheckedItems)
     if ($selected.Count -eq 0) {
@@ -1229,7 +1236,6 @@ $btnUninstallSelected.Add_Click({
     $btnUninstallSelected.Enabled = $true
 })
 
-# --- Evento: Instalar SITEF (completo) ---
 $btnSitefInstall.Add_Click({
     $btnSitefInstall.Enabled = $false
     $txtSitefLog.Clear()
@@ -1242,7 +1248,6 @@ $btnSitefInstall.Add_Click({
     $btnSitefInstall.Enabled = $true
 })
 
-# --- Evento: DLL_FLY ---
 $btnDllFly.Add_Click({
     $btnDllFly.Enabled = $false
     $txtSitefLog.Clear()
@@ -1255,7 +1260,6 @@ $btnDllFly.Add_Click({
     $btnDllFly.Enabled = $true
 })
 
-# --- Evento: DLL_FLY_EMBARCADO ---
 $btnDllFlyEmbarcado.Add_Click({
     $btnDllFlyEmbarcado.Enabled = $false
     $txtSitefLog.Clear()
@@ -1268,7 +1272,6 @@ $btnDllFlyEmbarcado.Add_Click({
     $btnDllFlyEmbarcado.Enabled = $true
 })
 
-# --- Evento: Abrir pasta C:\SITEF ---
 $btnSitefOpenFolder.Add_Click({
     $sitefDir = "C:\SITEF"
     if (Test-Path $sitefDir) {
