@@ -1139,54 +1139,7 @@ $progressSitef.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 5)
 $grpSitefLog.Controls.Add($progressSitef)
 $grpSitefLog.Controls.SetChildIndex($progressSitef, 0)
 
-# ============================================================
-#  STATUS
-# ============================================================
-$statusPanel = New-Object System.Windows.Forms.Panel
-$statusPanel.Dock = [System.Windows.Forms.DockStyle]::Bottom
-$statusPanel.Height = 150
-$statusPanel.BackColor = $ColorBackground
-$mainPanel.Controls.Add($statusPanel)
-
-$grpStatus = New-Object System.Windows.Forms.GroupBox
-$grpStatus.Text = "Status Geral"
-$grpStatus.Font = $FontHeader
-$grpStatus.ForeColor = $ColorText
-$grpStatus.Dock = [System.Windows.Forms.DockStyle]::Fill
-$grpStatus.Padding = New-Object System.Windows.Forms.Padding(10, 20, 10, 10)
-$statusPanel.Controls.Add($grpStatus)
-
-$flowStatus = New-Object System.Windows.Forms.FlowLayoutPanel
-$flowStatus.Dock = [System.Windows.Forms.DockStyle]::Fill
-$flowStatus.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
-$flowStatus.AutoScroll = $true
-$flowStatus.WrapContents = $false
-$flowStatus.Padding = New-Object System.Windows.Forms.Padding(5)
-$grpStatus.Controls.Add($flowStatus)
-
-$progressBar = New-Object System.Windows.Forms.ProgressBar
-$progressBar.Height = 20
-$progressBar.Width = 550
-$progressBar.Minimum = 0
-$flowStatus.Controls.Add($progressBar)
-
-$lblStatus = New-Object System.Windows.Forms.Label
-$lblStatus.Text = "Pronto para instalar"
-$lblStatus.Font = $FontNormal
-$lblStatus.ForeColor = $ColorSuccess
-$lblStatus.AutoSize = $true
-$flowStatus.Controls.Add($lblStatus)
-
-$txtLog = New-Object System.Windows.Forms.TextBox
-$txtLog.Multiline = $true
-$txtLog.ScrollBars = "Vertical"
-$txtLog.ReadOnly = $true
-$txtLog.Height = 70
-$txtLog.Width = 550
-$txtLog.Font = New-Object System.Drawing.Font("Consolas", 8)
-$txtLog.BackColor = [System.Drawing.Color]::White
-$flowStatus.Controls.Add($txtLog)
-
+#
 # ============================================================
 #  LOGS E DELEGATES
 # ============================================================
