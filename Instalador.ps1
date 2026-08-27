@@ -2,7 +2,7 @@
     ProvisioningTool.ps1
     Interface com abas separadas para cada função.
     Inclui aba "Ativar Windows" separada.
-    Aba SITEF com layout simples e botões extras.
+    Aba SITEF com layout simples e botões bem organizados.
 #>
 
 # ============================================================
@@ -454,7 +454,6 @@ function Download-DllFly {
         $log.Invoke("Diretório criado.")
     }
 
-    # Baixar ZIP
     $log.Invoke("Baixando DLL_FLY.zip (11.6 MB) ...")
     try {
         $webClient = New-Object System.Net.WebClient
@@ -467,7 +466,6 @@ function Download-DllFly {
         return
     }
 
-    # Extrair para pasta temporária
     $log.Invoke("Extraindo DLL_FLY.zip ...")
     try {
         if (Test-Path $tempExtractDir) { Remove-Item $tempExtractDir -Recurse -Force }
@@ -485,10 +483,8 @@ function Download-DllFly {
     # Verificar se a extração criou uma única subpasta
     $subItems = Get-ChildItem -Path $tempExtractDir
     if ($subItems.Count -eq 1 -and $subItems[0].PSIsContainer) {
-        # Caso tenha uma subpasta raiz, pega o conteúdo dela
         $sourceDir = $subItems[0].FullName
         $log.Invoke("Detectada subpasta raiz: $($subItems[0].Name). Movendo conteúdo para $targetDir ...")
-        # Move o conteúdo da subpasta para o destino
         Get-ChildItem -Path $sourceDir -Recurse -File | ForEach-Object {
             $relativePath = $_.FullName.Substring($sourceDir.Length + 1)
             $destFile = Join-Path $targetDir $relativePath
@@ -497,7 +493,6 @@ function Download-DllFly {
             Move-Item -Path $_.FullName -Destination $destFile -Force
         }
     } else {
-        # Caso contrário, move tudo diretamente
         $log.Invoke("Movendo arquivos diretamente para $targetDir ...")
         Get-ChildItem -Path $tempExtractDir -Recurse -File | ForEach-Object {
             $relativePath = $_.FullName.Substring($tempExtractDir.Length + 1)
@@ -508,16 +503,13 @@ function Download-DllFly {
         }
     }
 
-    # Remover pasta temporária
     Remove-Item $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
     $log.Invoke("Arquivos organizados.")
     $progressSitef.Value = 80
 
-    # Remover ZIP
     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
     $log.Invoke("Arquivo ZIP removido.")
 
-    # Adicionar exclusão
     $log.Invoke("Adicionando exclusão no Windows Defender para: $targetDir")
     try {
         Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
@@ -554,7 +546,6 @@ function Download-DllFlyEmbarcado {
         $log.Invoke("Diretório criado.")
     }
 
-    # Baixar ZIP
     $log.Invoke("Baixando DLL_FLY_EMBARCADO.zip (11.6 MB) ...")
     try {
         $webClient = New-Object System.Net.WebClient
@@ -567,7 +558,6 @@ function Download-DllFlyEmbarcado {
         return
     }
 
-    # Extrair para pasta temporária
     $log.Invoke("Extraindo DLL_FLY_EMBARCADO.zip ...")
     try {
         if (Test-Path $tempExtractDir) { Remove-Item $tempExtractDir -Recurse -Force }
@@ -582,13 +572,10 @@ function Download-DllFlyEmbarcado {
         return
     }
 
-    # Verificar se a extração criou uma única subpasta
     $subItems = Get-ChildItem -Path $tempExtractDir
     if ($subItems.Count -eq 1 -and $subItems[0].PSIsContainer) {
-        # Caso tenha uma subpasta raiz, pega o conteúdo dela
         $sourceDir = $subItems[0].FullName
         $log.Invoke("Detectada subpasta raiz: $($subItems[0].Name). Movendo conteúdo para $targetDir ...")
-        # Move o conteúdo da subpasta para o destino
         Get-ChildItem -Path $sourceDir -Recurse -File | ForEach-Object {
             $relativePath = $_.FullName.Substring($sourceDir.Length + 1)
             $destFile = Join-Path $targetDir $relativePath
@@ -597,7 +584,6 @@ function Download-DllFlyEmbarcado {
             Move-Item -Path $_.FullName -Destination $destFile -Force
         }
     } else {
-        # Caso contrário, move tudo diretamente
         $log.Invoke("Movendo arquivos diretamente para $targetDir ...")
         Get-ChildItem -Path $tempExtractDir -Recurse -File | ForEach-Object {
             $relativePath = $_.FullName.Substring($tempExtractDir.Length + 1)
@@ -608,16 +594,13 @@ function Download-DllFlyEmbarcado {
         }
     }
 
-    # Remover pasta temporária
     Remove-Item $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
     $log.Invoke("Arquivos organizados.")
     $progressSitef.Value = 80
 
-    # Remover ZIP
     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
     $log.Invoke("Arquivo ZIP removido.")
 
-    # Adicionar exclusão
     $log.Invoke("Adicionando exclusão no Windows Defender para: $targetDir")
     try {
         Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
@@ -1005,7 +988,7 @@ $btnCustomActivate.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 20)
 $flowActivate.Controls.Add($btnCustomActivate)
 
 # ============================================================
-#  ABA 5: SITEF (VERSÃO FINAL – LAYOUT FIXO COM BOTÕES EM LINHA)
+#  ABA 5: SITEF (LAYOUT ORGANIZADO)
 # ============================================================
 $tabSitef = New-Object System.Windows.Forms.TabPage
 $tabSitef.Text = "SITEF"
@@ -1023,7 +1006,7 @@ $tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Wind
 $tableSitef.Padding = New-Object System.Windows.Forms.Padding(10)
 $tabSitef.Controls.Add($tableSitef)
 
-# ---- Título ----
+# Título
 $lblSitefTitle = New-Object System.Windows.Forms.Label
 $lblSitefTitle.Text = "Instalação do Ambiente SITEF"
 $lblSitefTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
@@ -1031,7 +1014,7 @@ $lblSitefTitle.ForeColor = $ColorText
 $lblSitefTitle.AutoSize = $true
 $tableSitef.Controls.Add($lblSitefTitle, 0, 0)
 
-# ---- Descrição ----
+# Descrição
 $lblSitefDesc = New-Object System.Windows.Forms.Label
 $lblSitefDesc.Text = "Esta etapa irá baixar, extrair e executar os instaladores do SITEF.`n" +
                      "Após a execução, você deverá configurar manualmente os programas.`n" +
@@ -1044,16 +1027,17 @@ $lblSitefDesc.AutoSize = $true
 $lblSitefDesc.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 15)
 $tableSitef.Controls.Add($lblSitefDesc, 0, 1)
 
-# ---- Painel de botões (FlowLayout horizontal) ----
+# Painel de botões – FlowLayout horizontal com tamanhos fixos para organização
 $flowSitefButtons = New-Object System.Windows.Forms.FlowLayoutPanel
 $flowSitefButtons.Dock = [System.Windows.Forms.DockStyle]::Fill
 $flowSitefButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
-$flowSitefButtons.AutoSize = $true
 $flowSitefButtons.WrapContents = $true
-$flowSitefButtons.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 10)
+$flowSitefButtons.AutoSize = $false
+$flowSitefButtons.Height = 55  # Altura fixa para evitar compressão
+$flowSitefButtons.Padding = New-Object System.Windows.Forms.Padding(5, 5, 5, 5)
 $tableSitef.Controls.Add($flowSitefButtons, 0, 2)
 
-# Botão 1: Instalar SITEF
+# Botão: Instalar SITEF
 $btnSitefInstall = New-Object System.Windows.Forms.Button
 $btnSitefInstall.Text = "Instalar SITEF"
 $btnSitefInstall.Font = $FontButtonBold
@@ -1061,11 +1045,11 @@ $btnSitefInstall.BackColor = $ColorPrimary
 $btnSitefInstall.ForeColor = [System.Drawing.Color]::White
 $btnSitefInstall.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnSitefInstall.FlatAppearance.BorderSize = 0
-$btnSitefInstall.Size = New-Object System.Drawing.Size(180, 35)
-$btnSitefInstall.Margin = New-Object System.Windows.Forms.Padding(5, 0, 5, 0)
+$btnSitefInstall.Size = New-Object System.Drawing.Size(160, 35)
+$btnSitefInstall.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnSitefInstall)
 
-# Botão 2: DLL_FLY
+# Botão: DLL_FLY
 $btnDllFly = New-Object System.Windows.Forms.Button
 $btnDllFly.Text = "DLL_FLY (11.6 MB)"
 $btnDllFly.Font = $FontButtonBold
@@ -1073,11 +1057,11 @@ $btnDllFly.BackColor = $ColorPrimary
 $btnDllFly.ForeColor = [System.Drawing.Color]::White
 $btnDllFly.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnDllFly.FlatAppearance.BorderSize = 0
-$btnDllFly.Size = New-Object System.Drawing.Size(180, 35)
-$btnDllFly.Margin = New-Object System.Windows.Forms.Padding(5, 0, 5, 0)
+$btnDllFly.Size = New-Object System.Drawing.Size(160, 35)
+$btnDllFly.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnDllFly)
 
-# Botão 3: DLL_FLY_EMBARCADO
+# Botão: DLL_FLY_EMBARCADO
 $btnDllFlyEmbarcado = New-Object System.Windows.Forms.Button
 $btnDllFlyEmbarcado.Text = "DLL_FLY_EMBARCADO (11.6 MB)"
 $btnDllFlyEmbarcado.Font = $FontButtonBold
@@ -1085,11 +1069,22 @@ $btnDllFlyEmbarcado.BackColor = $ColorPrimary
 $btnDllFlyEmbarcado.ForeColor = [System.Drawing.Color]::White
 $btnDllFlyEmbarcado.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnDllFlyEmbarcado.FlatAppearance.BorderSize = 0
-$btnDllFlyEmbarcado.Size = New-Object System.Drawing.Size(180, 35)
-$btnDllFlyEmbarcado.Margin = New-Object System.Windows.Forms.Padding(5, 0, 5, 0)
+$btnDllFlyEmbarcado.Size = New-Object System.Drawing.Size(170, 35)
+$btnDllFlyEmbarcado.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnDllFlyEmbarcado)
 
-# Botão 4: Instalar tudo (verde)
+# Botão: Abrir pasta
+$btnSitefOpenFolder = New-Object System.Windows.Forms.Button
+$btnSitefOpenFolder.Text = "📂 Abrir pasta"
+$btnSitefOpenFolder.Font = $FontButton
+$btnSitefOpenFolder.BackColor = $ColorSurface
+$btnSitefOpenFolder.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnSitefOpenFolder.FlatAppearance.BorderColor = $ColorBorder
+$btnSitefOpenFolder.Size = New-Object System.Drawing.Size(130, 35)
+$btnSitefOpenFolder.Margin = New-Object System.Windows.Forms.Padding(3)
+$flowSitefButtons.Controls.Add($btnSitefOpenFolder)
+
+# Botão: Instalar tudo
 $btnInstallAll = New-Object System.Windows.Forms.Button
 $btnInstallAll.Text = "▶ Instalar tudo"
 $btnInstallAll.Font = $FontButtonBold
@@ -1098,21 +1093,10 @@ $btnInstallAll.ForeColor = [System.Drawing.Color]::White
 $btnInstallAll.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnInstallAll.FlatAppearance.BorderSize = 0
 $btnInstallAll.Size = New-Object System.Drawing.Size(150, 35)
-$btnInstallAll.Margin = New-Object System.Windows.Forms.Padding(5, 0, 5, 0)
+$btnInstallAll.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnInstallAll)
 
-# Botão 5: Abrir pasta
-$btnSitefOpenFolder = New-Object System.Windows.Forms.Button
-$btnSitefOpenFolder.Text = "📂 Abrir pasta"
-$btnSitefOpenFolder.Font = $FontButton
-$btnSitefOpenFolder.BackColor = $ColorSurface
-$btnSitefOpenFolder.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$btnSitefOpenFolder.FlatAppearance.BorderColor = $ColorBorder
-$btnSitefOpenFolder.Size = New-Object System.Drawing.Size(140, 35)
-$btnSitefOpenFolder.Margin = New-Object System.Windows.Forms.Padding(5, 0, 5, 0)
-$flowSitefButtons.Controls.Add($btnSitefOpenFolder)
-
-# Botão 6: Limpar log
+# Botão: Limpar log
 $btnClearLog = New-Object System.Windows.Forms.Button
 $btnClearLog.Text = "🗑️ Limpar log"
 $btnClearLog.Font = $FontButton
@@ -1120,10 +1104,10 @@ $btnClearLog.BackColor = $ColorSurface
 $btnClearLog.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnClearLog.FlatAppearance.BorderColor = $ColorBorder
 $btnClearLog.Size = New-Object System.Drawing.Size(120, 35)
-$btnClearLog.Margin = New-Object System.Windows.Forms.Padding(5, 0, 5, 0)
+$btnClearLog.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnClearLog)
 
-# ---- Log e progresso ----
+# Painel do log (ocupa o espaço restante)
 $panelSitefLog = New-Object System.Windows.Forms.Panel
 $panelSitefLog.Dock = [System.Windows.Forms.DockStyle]::Fill
 $panelSitefLog.Padding = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
@@ -1503,7 +1487,6 @@ $btnSitefOpenFolder.Add_Click({
     }
 })
 
-# --- NOVOS EVENTOS: Instalar tudo e Limpar log ---
 $btnInstallAll.Add_Click({
     $btnInstallAll.Enabled = $false
     $txtSitefLog.Clear()
