@@ -3,6 +3,17 @@
     Interface grafica para provisionamento de maquinas Windows.
     Layout com TableLayoutPanel – adapta-se automaticamente ao redimensionamento da janela.
     Todas as funções e eventos incluídos.
+
+    Alterações desta revisão:
+    - Corrigido bug em $btnRun.Add_Click onde $selectedSteps.Count nunca era 0
+      (Where-Object retorna $null quando nenhum item passa no filtro, e $null.Count
+      não gera erro nem é igual a 0). Agora o resultado é forçado a array com @(...).
+    - Install-Sitef agora tenta baixar/extrair AMBOS os arquivos mesmo que um falhe,
+      reporta claramente quais falharam, e só executa os instaladores se os dois
+      arquivos necessários (.msi e .exe) estiverem realmente presentes.
+    - Layout da coluna "3. Gerenciar aplicativos instalados" reescrito com
+      TableLayoutPanel (Dock=Fill) em vez de posicionamento absoluto por pixel,
+      corrigindo o problema da coluna não aparecer inteira ao redimensionar a janela.
 #>
 
 # ============================================================
@@ -271,6 +282,8 @@ function Get-InstalledProgramsList {
 
 # ============================================================
 #  FUNÇÃO DE INSTALAÇÃO SITEF
+#  (revisada: tenta baixar/extrair AMBOS os arquivos mesmo que um falhe,
+#   e só dispara os instaladores se os dois arquivos necessários existirem)
 # ============================================================
 function Install-Sitef {
     $log = $script:SitefLogDelegate
@@ -299,11 +312,16 @@ function Install-Sitef {
     $progressSitef.Maximum = $zipUrls.Count * 2
     $progressSitef.Value = 0
 
+    # Rastreia sucesso/falha de cada arquivo individualmente, em vez de abortar
+    # tudo no primeiro problema.
+    $itemStatus = @{}
+
     foreach ($item in $zipUrls) {
         $url = $item.url
         $fileName = $item.nome
         $zipPath = Join-Path $sitefDir $fileName
         $extractPath = Join-Path $sitefDir ([System.IO.Path]::GetFileNameWithoutExtension($fileName))
+        $itemStatus[$fileName] = $false
 
         if (Test-Path $zipPath) {
             $log.Invoke("Arquivo $fileName já existe. Verificando integridade...")
@@ -312,6 +330,7 @@ function Install-Sitef {
                 Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
                 $log.Invoke("Extraído com sucesso (arquivo existente).")
                 $progressSitef.Value += 2
+                $itemStatus[$fileName] = $true
                 continue
             } catch {
                 $log.Invoke("Falha na extração do arquivo existente. Removendo e baixando novamente...")
@@ -329,15 +348,17 @@ function Install-Sitef {
             $progressSitef.Value += 1
         } catch {
             $log.Invoke("ERRO ao baixar $url : $($_.Exception.Message)")
-            return
+            $log.Invoke("Pulando '$fileName' e tentando o próximo arquivo, se houver.")
+            continue
         }
 
         $bytes = [System.IO.File]::ReadAllBytes($zipPath)
         $isZip = $bytes.Count -ge 4 -and $bytes[0] -eq 0x50 -and $bytes[1] -eq 0x4B -and $bytes[2] -eq 0x03 -and $bytes[3] -eq 0x04
         if (-not $isZip) {
-            $log.Invoke("ERRO: O arquivo baixado não é um ZIP válido (cabeçalho inválido).")
+            $log.Invoke("ERRO: O arquivo baixado '$fileName' não é um ZIP válido (cabeçalho inválido).")
             Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-            return
+            $log.Invoke("Pulando '$fileName' e tentando o próximo arquivo, se houver.")
+            continue
         }
 
         $log.Invoke("Extraindo $fileName para $extractPath ...")
@@ -346,6 +367,7 @@ function Install-Sitef {
             Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
             $log.Invoke("Extraído com sucesso.")
             $progressSitef.Value += 1
+            $itemStatus[$fileName] = $true
         } catch {
             $log.Invoke("ERRO ao extrair com Expand-Archive: $($_.Exception.Message)")
             $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
@@ -353,26 +375,33 @@ function Install-Sitef {
                 [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath, $true)
                 $log.Invoke("Extraído com sucesso via fallback.")
                 $progressSitef.Value += 1
+                $itemStatus[$fileName] = $true
             } catch {
-                $log.Invoke("Falha na extração: $($_.Exception.Message)")
+                $log.Invoke("Falha na extração de '$fileName': $($_.Exception.Message)")
                 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-                return
+                $log.Invoke("Pulando '$fileName' e tentando o próximo arquivo, se houver.")
+                continue
             }
         }
     }
 
     $log.Invoke("")
-    $log.Invoke("Arquivos baixados e extraídos.")
+    $falhas = $itemStatus.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object { $_.Key }
+    if ($falhas) {
+        $log.Invoke("Os seguintes arquivos NÃO foram baixados/extraídos com sucesso: $($falhas -join ', ')")
+    } else {
+        $log.Invoke("Todos os arquivos foram baixados e extraídos com sucesso.")
+    }
 
     $msiPath = Get-ChildItem -Path $sitefDir -Recurse -Filter "GSurfRSA_Listener_Setup.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
     $exePath = Get-ChildItem -Path $sitefDir -Recurse -Filter "InstaladorGSurf.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 
     if (-not $msiPath) {
-        $log.Invoke("ERRO: Arquivo GSurfRSA_Listener_Setup.msi não encontrado.")
+        $log.Invoke("ERRO: Arquivo GSurfRSA_Listener_Setup.msi não encontrado. Instalação abortada.")
         return
     }
     if (-not $exePath) {
-        $log.Invoke("ERRO: Arquivo InstaladorGSurf.exe não encontrado.")
+        $log.Invoke("ERRO: Arquivo InstaladorGSurf.exe não encontrado. Instalação abortada.")
         return
     }
 
@@ -680,7 +709,7 @@ $btnInstallSelected.FlatAppearance.BorderSize = 0
 $btnInstallSelected.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $panelInstall.Controls.Add($btnInstallSelected)
 
-# ----- GRUPO 3: Remover -----
+# ----- GRUPO 3: Remover (layout reescrito com TableLayoutPanel / Dock=Fill) -----
 $grpUninstall = New-Object System.Windows.Forms.GroupBox
 $grpUninstall.Text = "3. Gerenciar aplicativos instalados"
 $grpUninstall.Font = $FontHeader
@@ -689,60 +718,78 @@ $grpUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
 $grpUninstall.Padding = New-Object System.Windows.Forms.Padding(10, 20, 10, 10)
 $tableLayout.Controls.Add($grpUninstall, 2, 0)
 
-$panelUninstall = New-Object System.Windows.Forms.Panel
-$panelUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelUninstall.AutoScroll = $true
-$grpUninstall.Controls.Add($panelUninstall)
+# TableLayoutPanel com 4 linhas: label (auto), lista (100%), botoes (auto), botao ativar (auto).
+# Dock=Fill em cada linha garante que a coluna inteira sempre fique visível,
+# independente do tamanho da janela — em vez de posicionar por pixel fixo.
+$tableUninstall = New-Object System.Windows.Forms.TableLayoutPanel
+$tableUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
+$tableUninstall.ColumnCount = 1
+$tableUninstall.RowCount = 4
+$tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize))) | Out-Null
+$tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100))) | Out-Null
+$tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize))) | Out-Null
+$tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize))) | Out-Null
+$grpUninstall.Controls.Add($tableUninstall)
 
 $lblUninstallInfo = New-Object System.Windows.Forms.Label
 $lblUninstallInfo.Text = "Atualize a lista e selecione o que deseja remover:"
 $lblUninstallInfo.Font = $FontNormal
 $lblUninstallInfo.ForeColor = $ColorMuted
-$lblUninstallInfo.Location = New-Object System.Drawing.Point(10, 10)
-$lblUninstallInfo.Size = New-Object System.Drawing.Size(300, 22)
-$panelUninstall.Controls.Add($lblUninstallInfo)
+$lblUninstallInfo.AutoSize = $false
+$lblUninstallInfo.Dock = [System.Windows.Forms.DockStyle]::Top
+$lblUninstallInfo.Height = 22
+$lblUninstallInfo.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 4)
+$tableUninstall.Controls.Add($lblUninstallInfo, 0, 0)
 
 $clbUninstall = New-Object System.Windows.Forms.CheckedListBox
-$clbUninstall.Location = New-Object System.Drawing.Point(10, 38)
-$clbUninstall.Size = New-Object System.Drawing.Size(300, 205)
+$clbUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
 $clbUninstall.CheckOnClick = $true
 $clbUninstall.Font = $FontNormal
-$clbUninstall.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
-$panelUninstall.Controls.Add($clbUninstall)
+$clbUninstall.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 4)
+$tableUninstall.Controls.Add($clbUninstall, 0, 1)
+
+# Linha de botões "Atualizar lista" / "Desinstalar" lado a lado, cada um ocupando 50%
+$panelUninstallButtons = New-Object System.Windows.Forms.TableLayoutPanel
+$panelUninstallButtons.Dock = [System.Windows.Forms.DockStyle]::Top
+$panelUninstallButtons.Height = 38
+$panelUninstallButtons.ColumnCount = 2
+$panelUninstallButtons.RowCount = 1
+$panelUninstallButtons.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50))) | Out-Null
+$panelUninstallButtons.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50))) | Out-Null
+$panelUninstallButtons.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100))) | Out-Null
+$tableUninstall.Controls.Add($panelUninstallButtons, 0, 2)
 
 $btnRefreshInstalled = New-Object System.Windows.Forms.Button
 $btnRefreshInstalled.Text = "Atualizar lista"
-$btnRefreshInstalled.Location = New-Object System.Drawing.Point(10, 250)
-$btnRefreshInstalled.Size = New-Object System.Drawing.Size(140, 30)
+$btnRefreshInstalled.Dock = [System.Windows.Forms.DockStyle]::Fill
+$btnRefreshInstalled.Margin = New-Object System.Windows.Forms.Padding(0, 4, 4, 4)
 $btnRefreshInstalled.Font = $FontButton
 $btnRefreshInstalled.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnRefreshInstalled.FlatAppearance.BorderColor = $ColorBorder
 $btnRefreshInstalled.BackColor = $ColorSurface
-$btnRefreshInstalled.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left
-$panelUninstall.Controls.Add($btnRefreshInstalled)
+$panelUninstallButtons.Controls.Add($btnRefreshInstalled, 0, 0)
 
 $btnUninstallSelected = New-Object System.Windows.Forms.Button
 $btnUninstallSelected.Text = "Desinstalar"
-$btnUninstallSelected.Location = New-Object System.Drawing.Point(160, 250)
-$btnUninstallSelected.Size = New-Object System.Drawing.Size(150, 30)
+$btnUninstallSelected.Dock = [System.Windows.Forms.DockStyle]::Fill
+$btnUninstallSelected.Margin = New-Object System.Windows.Forms.Padding(4, 4, 0, 4)
 $btnUninstallSelected.Font = $FontButton
 $btnUninstallSelected.BackColor = $ColorDanger
 $btnUninstallSelected.ForeColor = [System.Drawing.Color]::White
 $btnUninstallSelected.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnUninstallSelected.FlatAppearance.BorderSize = 0
-$btnUninstallSelected.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$panelUninstall.Controls.Add($btnUninstallSelected)
+$panelUninstallButtons.Controls.Add($btnUninstallSelected, 1, 0)
 
 $btnCustom = New-Object System.Windows.Forms.Button
 $btnCustom.Text = $CustomScriptLabel
-$btnCustom.Location = New-Object System.Drawing.Point(10, 288)
-$btnCustom.Size = New-Object System.Drawing.Size(300, 30)
+$btnCustom.Dock = [System.Windows.Forms.DockStyle]::Top
+$btnCustom.Height = 32
+$btnCustom.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 0)
 $btnCustom.Font = $FontButton
 $btnCustom.BackColor = $ColorSurface
 $btnCustom.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $btnCustom.FlatAppearance.BorderColor = $ColorBorder
-$btnCustom.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-$panelUninstall.Controls.Add($btnCustom)
+$tableUninstall.Controls.Add($btnCustom, 0, 3)
 
 # ============================================================
 #  ABA SITEF
@@ -897,7 +944,11 @@ $btnRun.Add_Click({
     $script:CancelRequested = $false
 
     $DryRun = $chkDryRun.Checked
-    $selectedSteps = $steps.Keys | Where-Object { $checkboxes[$_].Checked }
+
+    # CORREÇÃO: forçar array com @(...). Sem isso, quando nenhuma etapa está
+    # marcada, Where-Object retorna $null e "$null.Count -eq 0" nunca é $true,
+    # então o aviso de "nenhuma etapa selecionada" nunca aparecia.
+    $selectedSteps = @($steps.Keys | Where-Object { $checkboxes[$_].Checked })
 
     if ($selectedSteps.Count -eq 0) {
         [System.Windows.Forms.MessageBox]::Show("Nenhuma etapa selecionada.", "Aviso")
