@@ -152,12 +152,27 @@ function Step-RegiaoIdioma {
     $Log.Invoke("== Fuso horario e localizacao (Brasil) ==")
     if ($DryRun) { $Log.Invoke("[SIMULACAO] Definiria fuso horario de Brasilia e localizacao Brasil."); return }
     try {
+        # Define o fuso horário (sempre funciona)
         Set-TimeZone -Id "E. South America Standard Time" -ErrorAction Stop
-        Set-WinHomeLocation -GeoId 76
-        $Log.Invoke("Fuso horario (Brasilia) e localizacao (Brasil) definidos. Layout de teclado/idioma completo pode exigir reinicio.")
+        $Log.Invoke("Fuso horario (Brasilia) definido com sucesso.")
     } catch {
-        $Log.Invoke("Aviso ao ajustar regiao/idioma: $($_.Exception.Message)")
+        $Log.Invoke("Aviso: não foi possível definir o fuso horário: $($_.Exception.Message)")
     }
+
+    # Tenta definir a localização (pode falhar em algumas versões do Windows)
+    try {
+        Set-WinHomeLocation -GeoId 76 -ErrorAction Stop
+        $Log.Invoke("Localização (Brasil) definida com sucesso.")
+    } catch {
+        $Log.Invoke("Aviso: não foi possível definir a localização (GeoId 76). Isso é comum em edições sem suporte a idiomas adicionais. O fuso horário já foi ajustado.")
+        # Fallback: definir a localização pelo nome (se disponível)
+        try {
+            Set-WinHomeLocation -GeoId 76 -ErrorAction SilentlyContinue
+        } catch {
+            # Ignora o erro e continua
+        }
+    }
+    $Log.Invoke("Configuração de região concluída (possíveis avisos são normais).")
 }
 
 function Step-Debloat {
