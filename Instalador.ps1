@@ -102,9 +102,6 @@ $ChocoApps = $AppsWithCategories | Where-Object { $_.Manager -eq "choco" } | For
 $WingetApps = $AppsWithCategories | Where-Object { $_.Manager -eq "winget" } | ForEach-Object { $_.Id }
 $WingetStoreApps = $AppsWithCategories | Where-Object { $_.Manager -eq "wingetStore" } | ForEach-Object { $_.Id }
 
-# URL que será aberta pelo botão "ABRIR ATIVAÇÃO DO WINDOWS"
-$ActivationUrl = "https://www.microsoft.com/pt-br/software-download/windows11"
-
 # Versão do instalador
 $InstallerVersion = "2.6"
 
@@ -1383,7 +1380,7 @@ $btnUninstallSelected.FlatAppearance.BorderSize = 0
 $panelUninstallButtons.Controls.Add($btnUninstallSelected)
 
 # ============================================================
-# ABA ATIVAR WINDOWS (inalterada, com link)
+# ABA ATIVAR WINDOWS (com execução do script de ativação)
 # ============================================================
 
 $tabActivate = New-Object System.Windows.Forms.TabPage
@@ -1407,14 +1404,14 @@ $lblActivateTitle.Margin = New-Object System.Windows.Forms.Padding(0,0,0,20)
 $flowActivate.Controls.Add($lblActivateTitle)
 
 $lblActivateDesc = New-Object System.Windows.Forms.Label
-$lblActivateDesc.Text = "Clique no botão abaixo para acessar o link de ativação/instalação do Windows."
+$lblActivateDesc.Text = "Clique no botão abaixo para executar o script de ativação do Windows."
 $lblActivateDesc.MaximumSize = New-Object System.Drawing.Size(700,0)
 $lblActivateDesc.AutoSize = $true
 $lblActivateDesc.Margin = New-Object System.Windows.Forms.Padding(0,0,0,25)
 $flowActivate.Controls.Add($lblActivateDesc)
 
 $btnCustomActivate = New-Object System.Windows.Forms.Button
-$btnCustomActivate.Text = "ABRIR LINK DE ATIVAÇÃO"
+$btnCustomActivate.Text = "EXECUTAR ATIVAÇÃO DO WINDOWS"
 $btnCustomActivate.Font = $FontButtonBold
 $btnCustomActivate.BackColor = $ColorPrimary
 $btnCustomActivate.ForeColor = [System.Drawing.Color]::White
@@ -1723,19 +1720,27 @@ $btnUninstallSelected.Add_Click({
     }
 })
 
-# Ativar Windows - abrir link
+# ============================================================
+# ATIVAÇÃO - EXECUTA SCRIPT DE ATIVAÇÃO
+# ============================================================
+
 $btnCustomActivate.Add_Click({
     try {
-        Write-ConfigLog "Abrindo link de ativação: $ActivationUrl"
-        Start-Process $ActivationUrl
-        Write-ConfigLog "Link aberto."
+        Write-ConfigLog "Executando script de ativação do Windows..."
+        # Executa o comando irm https://get.activated.win | iex
+        $scriptBlock = { irm https://get.activated.win | iex }
+        & $scriptBlock
+        Write-ConfigLog "Script de ativação executado."
     } catch {
-        Write-ConfigLog "ERRO ao abrir link: $($_.Exception.Message)"
-        [System.Windows.Forms.MessageBox]::Show("Não foi possível abrir o link de ativação.`r`nVerifique sua conexão com a internet e tente novamente.","Erro")
+        Write-ConfigLog "ERRO ao executar script de ativação: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show("Não foi possível executar o script de ativação.`r`nVerifique sua conexão com a internet e tente novamente.","Erro")
     }
 })
 
+# ============================================================
 # SITEF - botões
+# ============================================================
+
 $btnSitefInstall.Add_Click({
     if ($script:SitefBusy) { return }
     $script:SitefBusy = $true
