@@ -617,12 +617,294 @@ function Download-DllFlyEmbarcado {
 }
 
 # ============================================================
+#  FUNCAO MITRYUSWEB
+# ============================================================
+function Install-MitryusWeb {
+    $log = $script:MitryusLogDelegate
+    $progressMitryus.Value = 0
+
+    $url = "http://mitryusweb.com.br/mitryusweb/versao/versao.zip"
+    $destino = "C:\MITRYUSWEB"
+    $tempRoot = Join-Path $env:TEMP "MCNTV_MITRYUSWEB"
+    $zipPath = Join-Path $tempRoot "versao.zip"
+    $extractPath = Join-Path $tempRoot "extract"
+    $system32 = Join-Path $env:WINDIR "System32"
+    $syswow64 = Join-Path $env:WINDIR "SysWOW64"
+
+    $log.Invoke("=== INSTALACAO MITRYUSWEB ===")
+    $log.Invoke("")
+    $log.Invoke("Fonte: $url")
+    $log.Invoke("Destino: $destino")
+    $log.Invoke("")
+
+    try {
+        if (Test-Path $tempRoot) {
+            Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
+
+        $log.Invoke("[1/4] Baixando versao.zip...")
+        $webClient = New-Object System.Net.WebClient
+        $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        $webClient.DownloadFile($url, $zipPath)
+        $webClient.Dispose()
+
+        if (-not (Test-Path $zipPath)) {
+            throw "O arquivo versao.zip nao foi baixado."
+        }
+        if ((Get-Item $zipPath).Length -eq 0) {
+            throw "O arquivo versao.zip foi baixado vazio."
+        }
+        $progressMitryus.Value = 25
+        $log.Invoke("Download concluido.")
+        $log.Invoke("")
+
+        $log.Invoke("[2/4] Extraindo pacote...")
+        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+        $progressMitryus.Value = 45
+        $log.Invoke("Extracao concluida.")
+
+        $pastaMitryus = Get-ChildItem -Path $extractPath -Directory -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ieq "Instalar Mitryus" } |
+            Select-Object -First 1
+
+        if (-not $pastaMitryus) {
+            throw "A pasta MITRYUSWEB nao foi encontrada dentro do ZIP."
+        }
+
+        $log.Invoke("Pasta encontrada: $($pastaMitryus.FullName)")
+        $log.Invoke("")
+
+        $log.Invoke("[3/4] Instalando em C:\MITRYUSWEB...")
+
+        # So substitui a instalacao antiga depois que a nova foi extraida corretamente.
+        if (Test-Path $destino) {
+            $backup = Join-Path $tempRoot "MITRYUSWEB_old"
+            $log.Invoke("Instalacao anterior encontrada. Criando copia temporaria...")
+            Move-Item -Path $destino -Destination $backup -Force
+        }
+
+        try {
+            New-Item -ItemType Directory -Path $destino -Force | Out-Null
+            Get-ChildItem -Path $pastaMitryus.FullName -Force | ForEach-Object {
+                Copy-Item -Path $_.FullName -Destination $destino -Recurse -Force
+            }
+        }
+        catch {
+            if (Test-Path $destino) {
+                Remove-Item $destino -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path $backup) {
+                Move-Item -Path $backup -Destination $destino -Force -ErrorAction SilentlyContinue
+            }
+            throw
+        }
+
+        $progressMitryus.Value = 65
+        $log.Invoke("MITRYUSWEB instalado em C:\MITRYUSWEB.")
+        $log.Invoke("")
+
+        $log.Invoke("[4/4] Instalando DLLs...")
+        $pastaDLL = Join-Path $destino "DLL"
+        $falhas = New-Object System.Collections.ArrayList
+        $sucesso = 0
+
+        if (Test-Path $pastaDLL) {
+            $dlls = @(Get-ChildItem -Path $pastaDLL -Filter "*.dll" -File -Recurse)
+            $log.Invoke("DLLs encontradas: $($dlls.Count)")
+            $log.Invoke("")
+
+            foreach ($dll in $dlls) {
+                $ok32 = $true
+                $okWow = $true
+                $log.Invoke("DLL: $($dll.Name)")
+
+                try {
+                    Copy-Item -Path $dll.FullName -Destination $system32 -Force -ErrorAction Stop
+                    $log.Invoke("  System32: OK")
+                }
+                catch {
+                    $ok32 = $false
+                    $log.Invoke("  System32: BLOQUEADA - $($_.Exception.Message)")
+                }
+
+                try {
+                    Copy-Item -Path $dll.FullName -Destination $syswow64 -Force -ErrorAction Stop
+                    $log.Invoke("  SysWOW64: OK")
+                }
+                catch {
+                    $okWow = $false
+                    $log.Invoke("  SysWOW64: BLOQUEADA - $($_.Exception.Message)")
+                }
+
+                if ($ok32 -and $okWow) {
+                    $sucesso++
+                } else {
+                    [void]$falhas.Add($dll.Name)
+                }
+                $log.Invoke("")
+            }
+        }
+        else {
+            $log.Invoke("Aviso: a pasta C:\MITRYUSWEB\DLL nao foi encontrada.")
+        }
+
+        $progressMitryus.Value = 100
+        $log.Invoke("============================================================")
+        $log.Invoke("INSTALACAO MITRYUSWEB CONCLUIDA")
+        $log.Invoke("============================================================")
+        $log.Invoke("")
+        $log.Invoke("Pasta: C:\MITRYUSWEB")
+        $log.Invoke("DLLs instaladas nos dois diretorios: $sucesso")
+
+        if ($falhas.Count -gt 0) {
+            $log.Invoke("")
+            $log.Invoke("AVISO: $($falhas.Count) DLL(s) nao puderam ser copiadas para um ou ambos os diretorios porque estavam em uso:")
+            foreach ($nome in $falhas) { $log.Invoke(" - $nome") }
+            $log.Invoke("")
+            $log.Invoke("Feche os programas que usam essas DLLs e execute a instalacao novamente se necessario.")
+        }
+
+        $log.Invoke("")
+        $log.Invoke("=== FIM MITRYUSWEB ===")
+
+        [System.Windows.Forms.MessageBox]::Show(
+            "MITRYUSWEB instalado em C:\MITRYUSWEB.`n`nDLLs bloqueadas: $($falhas.Count)`nConsulte o log para detalhes.",
+            "MITRYUSWEB",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            $(if ($falhas.Count -gt 0) { [System.Windows.Forms.MessageBoxIcon]::Warning } else { [System.Windows.Forms.MessageBoxIcon]::Information })
+        ) | Out-Null
+    }
+    catch {
+        $progressMitryus.Value = 0
+        $log.Invoke("")
+        $log.Invoke("============================================================")
+        $log.Invoke("ERRO NA INSTALACAO MITRYUSWEB")
+        $log.Invoke("============================================================")
+        $log.Invoke("$($_.Exception.Message)")
+        $log.Invoke("Linha: $($_.InvocationInfo.ScriptLineNumber)")
+        $log.Invoke("")
+        [System.Windows.Forms.MessageBox]::Show(
+            "A instalacao do MITRYUSWEB encontrou um erro:`n`n$($_.Exception.Message)",
+            "Erro - MITRYUSWEB",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        ) | Out-Null
+    }
+    finally {
+        if (Test-Path $tempRoot) {
+            Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# ============================================================
+#  MITRYUSFLY - INSTALACAO VIA WINGET
+# ============================================================
+
+function Instalar-MitryusFly {
+    param(
+        [System.Windows.Forms.TextBox]$LogBox,
+        [System.Windows.Forms.ProgressBar]$ProgressBar
+    )
+
+    try {
+        $ProgressBar.Style = "Continuous"
+        $ProgressBar.Value = 10
+        $LogBox.AppendText("`r`n=== INSTALACAO MITRYUSFLY ===`r`n")
+        $LogBox.AppendText("Executando: winget install 9N5Z8N96BZBQ`r`n")
+
+        if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+            throw "O winget nao foi encontrado neste computador."
+        }
+
+        $ProgressBar.Value = 20
+
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "winget.exe"
+        $psi.Arguments = "install 9N5Z8N96BZBQ --accept-source-agreements --accept-package-agreements"
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+
+        $processo = New-Object System.Diagnostics.Process
+        $processo.StartInfo = $psi
+
+        [void]$processo.Start()
+
+        while (-not $processo.HasExited) {
+            $linha = $processo.StandardOutput.ReadLine()
+            if ($null -ne $linha -and $linha.Trim() -ne "") {
+                $LogBox.AppendText("$linha`r`n")
+            }
+
+            while (-not $processo.StandardError.EndOfStream) {
+                $erroLinha = $processo.StandardError.ReadLine()
+                if ($erroLinha) {
+                    $LogBox.AppendText("$erroLinha`r`n")
+                }
+            }
+
+            [System.Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 100
+
+            if ($ProgressBar.Value -lt 95) {
+                $ProgressBar.Value += 1
+            }
+        }
+
+        while (-not $processo.StandardOutput.EndOfStream) {
+            $linha = $processo.StandardOutput.ReadLine()
+            if ($linha) {
+                $LogBox.AppendText("$linha`r`n")
+            }
+        }
+
+        while (-not $processo.StandardError.EndOfStream) {
+            $erroLinha = $processo.StandardError.ReadLine()
+            if ($erroLinha) {
+                $LogBox.AppendText("$erroLinha`r`n")
+            }
+        }
+
+        $codigo = $processo.ExitCode
+        $ProgressBar.Value = 100
+
+        if ($codigo -eq 0) {
+            $LogBox.AppendText("MITRYUSFLY instalado com sucesso.`r`n")
+            [System.Windows.Forms.MessageBox]::Show(
+                "MITRYUSFLY instalado com sucesso.",
+                "MITRYUSFLY",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information
+            ) | Out-Null
+        }
+        else {
+            $LogBox.AppendText("O winget terminou com codigo $codigo.`r`n")
+            [System.Windows.Forms.MessageBox]::Show(
+                "O winget terminou com codigo $codigo.`r`n`r`nConsulte o log para verificar o resultado.",
+                "MITRYUSFLY",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            ) | Out-Null
+        }
+    }
+    catch {
+        $ProgressBar.Value = 0
+        $LogBox.AppendText("ERRO MITRYUSFLY: $($_.Exception.Message)`r`n")
+
+        [System.Windows.Forms.MessageBox]::Show(
+            $_.Exception.Message,
+            "Erro - MITRYUSFLY",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        ) | Out-Null
+    }
+}
+
+# ============================================================
 #  INTERFACE GRAFICA - MENU LATERAL VIA TABCONTROL NATIVO
-#  (Alignment=Left + desenho customizado, em vez de Paineis
-#  manuais. Isso elimina os bugs de layout: quem controla a
-#  posicao/visibilidade de cada "pagina" agora e o proprio
-#  motor de layout do TabControl - o mesmo mecanismo que ja
-#  funcionava sem bugs no script original com abas.)
 # ============================================================
 $ColorBackground = [System.Drawing.Color]::FromArgb(245,247,250)
 $ColorSurface    = [System.Drawing.Color]::White
@@ -666,8 +948,6 @@ $tabControl.Dock = [System.Windows.Forms.DockStyle]::Fill
 $tabControl.Alignment = [System.Windows.Forms.TabAlignment]::Left
 $tabControl.Multiline = $true
 $tabControl.SizeMode = [System.Windows.Forms.TabSizeMode]::Fixed
-# Para TabAlignment Left/Right, ItemSize.Width = altura de cada aba,
-# ItemSize.Height = largura da faixa lateral (nossa "sidebar").
 $tabControl.ItemSize = New-Object System.Drawing.Size(48, 210)
 $tabControl.DrawMode = [System.Windows.Forms.TabDrawMode]::OwnerDrawFixed
 $tabControl.Padding = New-Object System.Drawing.Point(16, 6)
@@ -679,11 +959,6 @@ $tabControl.Add_DrawItem({
     try {
         $tp = $tabControl.TabPages[$e.Index]
         $tabRect = $tabControl.GetTabRect($e.Index)
-        # Conversao explicita para [int]: em alguns hosts do PowerShell o
-        # binding de propriedades de uma struct Rectangle vindo de um
-        # evento .NET chega "empacotado" de um jeito que quebra operadores
-        # aritmeticos diretos (+, -). O cast para [int] normaliza o valor
-        # e evita o erro "op_Addition" / DrawString sem sobrecarga.
         $rx = [int]$tabRect.X
         $ry = [int]$tabRect.Y
         $rw = [int]$tabRect.Width
@@ -714,9 +989,7 @@ $tabControl.Add_DrawItem({
             $accentBrush.Dispose()
         }
     } catch {
-        # Se o desenho customizado falhar por qualquer motivo, nao trava o
-        # form nem gera uma enxurrada de erros - a aba continua funcionando,
-        # so perde a estilizacao (fica com o visual padrao do TabControl).
+        # Se falhar, não trava
     }
 })
 
@@ -1065,7 +1338,6 @@ $tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Wind
 $tableSitef.Padding = New-Object System.Windows.Forms.Padding(20)
 $tabSitef.Controls.Add($tableSitef)
 
-# Título
 $lblSitefTitle = New-Object System.Windows.Forms.Label
 $lblSitefTitle.Text = "Instalação do Ambiente SITEF"
 $lblSitefTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
@@ -1073,7 +1345,6 @@ $lblSitefTitle.ForeColor = $ColorText
 $lblSitefTitle.AutoSize = $true
 $tableSitef.Controls.Add($lblSitefTitle, 0, 0)
 
-# Descrição
 $lblSitefDesc = New-Object System.Windows.Forms.Label
 $lblSitefDesc.Text = "Esta etapa irá baixar, extrair e executar os instaladores do SITEF.`n" +
                      "Após a execução, você deverá configurar manualmente os programas.`n" +
@@ -1086,7 +1357,6 @@ $lblSitefDesc.AutoSize = $true
 $lblSitefDesc.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 15)
 $tableSitef.Controls.Add($lblSitefDesc, 0, 1)
 
-# Painel de botões – com AutoSize
 $flowSitefButtons = New-Object System.Windows.Forms.FlowLayoutPanel
 $flowSitefButtons.Dock = [System.Windows.Forms.DockStyle]::Top
 $flowSitefButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
@@ -1096,7 +1366,6 @@ $flowSitefButtons.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShr
 $flowSitefButtons.Padding = New-Object System.Windows.Forms.Padding(5)
 $tableSitef.Controls.Add($flowSitefButtons, 0, 2)
 
-# Botão: Instalar SITEF
 $btnSitefInstall = New-Object System.Windows.Forms.Button
 $btnSitefInstall.Text = "Instalar SITEF"
 $btnSitefInstall.Font = $FontButtonBold
@@ -1108,7 +1377,6 @@ $btnSitefInstall.Size = New-Object System.Drawing.Size(160, 35)
 $btnSitefInstall.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnSitefInstall)
 
-# Botão: DLL_FLY
 $btnDllFly = New-Object System.Windows.Forms.Button
 $btnDllFly.Text = "DLL_FLY (11.6 MB)"
 $btnDllFly.Font = $FontButtonBold
@@ -1120,7 +1388,6 @@ $btnDllFly.Size = New-Object System.Drawing.Size(160, 35)
 $btnDllFly.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnDllFly)
 
-# Botão: DLL_FLY_EMBARCADO
 $btnDllFlyEmbarcado = New-Object System.Windows.Forms.Button
 $btnDllFlyEmbarcado.Text = "DLL_FLY_EMBARCADO (11.6 MB)"
 $btnDllFlyEmbarcado.Font = $FontButtonBold
@@ -1132,7 +1399,6 @@ $btnDllFlyEmbarcado.Size = New-Object System.Drawing.Size(170, 35)
 $btnDllFlyEmbarcado.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnDllFlyEmbarcado)
 
-# Botão: Abrir pasta
 $btnSitefOpenFolder = New-Object System.Windows.Forms.Button
 $btnSitefOpenFolder.Text = "📂 Abrir pasta"
 $btnSitefOpenFolder.Font = $FontButton
@@ -1143,7 +1409,6 @@ $btnSitefOpenFolder.Size = New-Object System.Drawing.Size(130, 35)
 $btnSitefOpenFolder.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnSitefOpenFolder)
 
-# Botão: Instalar tudo
 $btnInstallAll = New-Object System.Windows.Forms.Button
 $btnInstallAll.Text = "▶ Instalar tudo"
 $btnInstallAll.Font = $FontButtonBold
@@ -1155,7 +1420,6 @@ $btnInstallAll.Size = New-Object System.Drawing.Size(150, 35)
 $btnInstallAll.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnInstallAll)
 
-# Botão: Limpar log
 $btnClearLog = New-Object System.Windows.Forms.Button
 $btnClearLog.Text = "🗑️ Limpar log"
 $btnClearLog.Font = $FontButton
@@ -1166,7 +1430,6 @@ $btnClearLog.Size = New-Object System.Drawing.Size(120, 35)
 $btnClearLog.Margin = New-Object System.Windows.Forms.Padding(3)
 $flowSitefButtons.Controls.Add($btnClearLog)
 
-# Painel do log (ocupa o espaço restante)
 $panelSitefLog = New-Object System.Windows.Forms.Panel
 $panelSitefLog.Dock = [System.Windows.Forms.DockStyle]::Fill
 $panelSitefLog.Padding = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
@@ -1199,7 +1462,148 @@ $grpSitefLog.Controls.Add($progressSitef)
 $grpSitefLog.Controls.SetChildIndex($progressSitef, 0)
 
 # ============================================================
-#  BARRA DE STATUS E PROGRESSO GLOBAL (usada na pagina Config)
+#  ABA 6: MITRYUSWEB
+# ============================================================
+$tabMitryus = New-Object System.Windows.Forms.TabPage
+$tabMitryus.Text = "INSTALAR MITRYUS"
+$tabMitryus.BackColor = $ColorBackground
+$tabControl.TabPages.Add($tabMitryus)
+
+$tableMitryus = New-Object System.Windows.Forms.TableLayoutPanel
+$tableMitryus.Dock = [System.Windows.Forms.DockStyle]::Fill
+$tableMitryus.ColumnCount = 1
+$tableMitryus.RowCount = 4
+$tableMitryus.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$tableMitryus.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$tableMitryus.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$tableMitryus.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+$tableMitryus.Padding = New-Object System.Windows.Forms.Padding(20)
+$tabMitryus.Controls.Add($tableMitryus)
+
+$lblMitryusTitle = New-Object System.Windows.Forms.Label
+$lblMitryusTitle.Text = "Instalação MITRYUS"
+$lblMitryusTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
+$lblMitryusTitle.ForeColor = $ColorText
+$lblMitryusTitle.AutoSize = $true
+$tableMitryus.Controls.Add($lblMitryusTitle, 0, 0)
+
+$lblMitryusDesc = New-Object System.Windows.Forms.Label
+$lblMitryusDesc.Text = "Baixa automaticamente a versão mais recente do MITRYUSWEB.`n" +
+                       "O pacote é extraído para C:\MITRYUSWEB.`n" +
+                       "As DLLs da pasta DLL também são copiadas para System32 e SysWOW64."
+$lblMitryusDesc.Font = $FontNormal
+$lblMitryusDesc.ForeColor = $ColorMuted
+$lblMitryusDesc.AutoSize = $true
+$lblMitryusDesc.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 15)
+$tableMitryus.Controls.Add($lblMitryusDesc, 0, 1)
+
+$flowMitryusButtons = New-Object System.Windows.Forms.FlowLayoutPanel
+$flowMitryusButtons.Dock = [System.Windows.Forms.DockStyle]::Top
+$flowMitryusButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+$flowMitryusButtons.WrapContents = $true
+$flowMitryusButtons.AutoSize = $true
+$flowMitryusButtons.Padding = New-Object System.Windows.Forms.Padding(5)
+$tableMitryus.Controls.Add($flowMitryusButtons, 0, 2)
+
+$btnMitryusInstall = New-Object System.Windows.Forms.Button
+$btnMitryusInstall.Text = "INSTALAR MITRYUS"
+$btnMitryusInstall.Font = $FontButtonBold
+$btnMitryusInstall.BackColor = $ColorSuccess
+$btnMitryusInstall.ForeColor = [System.Drawing.Color]::White
+$btnMitryusInstall.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnMitryusInstall.FlatAppearance.BorderSize = 0
+$btnMitryusInstall.Size = New-Object System.Drawing.Size(230, 40)
+$flowMitryusButtons.Controls.Add($btnMitryusInstall)
+
+$btnMitryusOpenFolder = New-Object System.Windows.Forms.Button
+$btnMitryusOpenFolder.Text = "Abrir C:\MITRYUSWEB"
+$btnMitryusOpenFolder.Font = $FontButton
+$btnMitryusOpenFolder.BackColor = $ColorSurface
+$btnMitryusOpenFolder.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnMitryusOpenFolder.FlatAppearance.BorderColor = $ColorBorder
+$btnMitryusOpenFolder.Size = New-Object System.Drawing.Size(180, 40)
+$flowMitryusButtons.Controls.Add($btnMitryusOpenFolder)
+
+# ----- NOVO BOTÃO: Instalar MitryusFly -----
+$btnInstalarMitryusFly = New-Object System.Windows.Forms.Button
+$btnInstalarMitryusFly.Text = "Instalar MitryusFly"
+$btnInstalarMitryusFly.Font = $FontButtonBold
+$btnInstalarMitryusFly.BackColor = $ColorSuccess
+$btnInstalarMitryusFly.ForeColor = [System.Drawing.Color]::White
+$btnInstalarMitryusFly.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnInstalarMitryusFly.FlatAppearance.BorderSize = 0
+$btnInstalarMitryusFly.Size = New-Object System.Drawing.Size(180, 40)
+$btnInstalarMitryusFly.Margin = New-Object System.Windows.Forms.Padding(3)
+$flowMitryusButtons.Controls.Add($btnInstalarMitryusFly)
+
+$btnInstalarMitryusFly.Add_Click({
+    Instalar-MitryusFly -LogBox $txtMitryusLog -ProgressBar $progressMitryus
+})
+
+$panelMitryusLog = New-Object System.Windows.Forms.Panel
+$panelMitryusLog.Dock = [System.Windows.Forms.DockStyle]::Fill
+$panelMitryusLog.Padding = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
+$tableMitryus.Controls.Add($panelMitryusLog, 0, 3)
+
+$grpMitryusLog = New-Object System.Windows.Forms.GroupBox
+$grpMitryusLog.Text = "Log da instalação MITRYUS"
+$grpMitryusLog.Font = $FontHeader
+$grpMitryusLog.ForeColor = $ColorText
+$grpMitryusLog.Dock = [System.Windows.Forms.DockStyle]::Fill
+$grpMitryusLog.Padding = New-Object System.Windows.Forms.Padding(10)
+$panelMitryusLog.Controls.Add($grpMitryusLog)
+
+$txtMitryusLog = New-Object System.Windows.Forms.TextBox
+$txtMitryusLog.Multiline = $true
+$txtMitryusLog.ScrollBars = "Vertical"
+$txtMitryusLog.ReadOnly = $true
+$txtMitryusLog.Dock = [System.Windows.Forms.DockStyle]::Fill
+$txtMitryusLog.Font = New-Object System.Drawing.Font("Consolas", 8)
+$txtMitryusLog.BackColor = [System.Drawing.Color]::White
+$grpMitryusLog.Controls.Add($txtMitryusLog)
+
+$progressMitryus = New-Object System.Windows.Forms.ProgressBar
+$progressMitryus.Dock = [System.Windows.Forms.DockStyle]::Top
+$progressMitryus.Height = 20
+$progressMitryus.Minimum = 0
+$progressMitryus.Maximum = 100
+$grpMitryusLog.Controls.Add($progressMitryus)
+$grpMitryusLog.Controls.SetChildIndex($progressMitryus, 0)
+
+$script:MitryusLogDelegate = {
+    param($msg)
+    $line = "$msg"
+    $txtMitryusLog.AppendText("$line`r`n")
+    $txtMitryusLog.SelectionStart = $txtMitryusLog.Text.Length
+    $txtMitryusLog.ScrollToCaret()
+    Add-Content -Path $LogFilePath -Value "[MITRYUSWEB] $line" -Encoding UTF8
+    [System.Windows.Forms.Application]::DoEvents()
+}
+
+$btnMitryusInstall.Add_Click({
+    $btnMitryusInstall.Enabled = $false
+    $btnMitryusOpenFolder.Enabled = $false
+    $txtMitryusLog.Clear()
+    try {
+        Install-MitryusWeb
+    }
+    catch {
+        $txtMitryusLog.AppendText("ERRO inesperado: $($_.Exception.Message)`r`n")
+    }
+    $btnMitryusInstall.Enabled = $true
+    $btnMitryusOpenFolder.Enabled = $true
+})
+
+$btnMitryusOpenFolder.Add_Click({
+    if (Test-Path "C:\MITRYUSWEB") {
+        Start-Process explorer.exe "C:\MITRYUSWEB"
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("A pasta C:\MITRYUSWEB ainda não existe. Execute a instalação primeiro.", "Pasta não encontrada") | Out-Null
+    }
+})
+
+# ============================================================
+#  BARRA DE STATUS E PROGRESSO GLOBAL
 # ============================================================
 $panelStatusBar = New-Object System.Windows.Forms.Panel
 $panelStatusBar.Dock = [System.Windows.Forms.DockStyle]::Bottom
@@ -1450,7 +1854,6 @@ $btnUninstallSelected.Add_Click({
     $btnUninstallSelected.Enabled = $true
 })
 
-# Evento: Ativar Windows
 $btnCustomActivate.Add_Click({
     if ([string]::IsNullOrWhiteSpace($CustomScriptUrl) -or $CustomScriptUrl -like "*usuario/repositorio*") {
         [System.Windows.Forms.MessageBox]::Show("Edite as variaveis `$CustomScriptUrl e `$CustomScriptLabel no topo do ProvisioningTool.ps1 antes de usar este botao.", "Configure o link")
@@ -1484,7 +1887,6 @@ $btnCustomActivate.Add_Click({
     $btnCustomActivate.Enabled = $true
 })
 
-# Eventos da aba SITEF
 $btnSitefInstall.Add_Click({
     $btnSitefInstall.Enabled = $false
     $txtSitefLog.Clear()
