@@ -676,29 +676,47 @@ $mainPanel.Controls.Add($tabControl)
 
 $tabControl.Add_DrawItem({
     param($sender, $e)
-    $tp = $tabControl.TabPages[$e.Index]
-    $tabRect = $tabControl.GetTabRect($e.Index)
-    $isSelected = ($e.Index -eq $tabControl.SelectedIndex)
+    try {
+        $tp = $tabControl.TabPages[$e.Index]
+        $tabRect = $tabControl.GetTabRect($e.Index)
+        # Conversao explicita para [int]: em alguns hosts do PowerShell o
+        # binding de propriedades de uma struct Rectangle vindo de um
+        # evento .NET chega "empacotado" de um jeito que quebra operadores
+        # aritmeticos diretos (+, -). O cast para [int] normaliza o valor
+        # e evita o erro "op_Addition" / DrawString sem sobrecarga.
+        $rx = [int]$tabRect.X
+        $ry = [int]$tabRect.Y
+        $rw = [int]$tabRect.Width
+        $rh = [int]$tabRect.Height
+        $isSelected = ($e.Index -eq $tabControl.SelectedIndex)
 
-    $bgColor = if ($isSelected) { $ColorSidebarSel } else { $ColorSidebar }
-    $bgBrush = New-Object System.Drawing.SolidBrush($bgColor)
-    $e.Graphics.FillRectangle($bgBrush, $tabRect)
-    $bgBrush.Dispose()
+        $bgColor = if ($isSelected) { $ColorSidebarSel } else { $ColorSidebar }
+        $bgBrush = New-Object System.Drawing.SolidBrush($bgColor)
+        $e.Graphics.FillRectangle($bgBrush, $rx, $ry, $rw, $rh)
+        $bgBrush.Dispose()
 
-    $fontToUse = if ($isSelected) { $FontNavBold } else { $FontNav }
-    $textBrush = New-Object System.Drawing.SolidBrush($ColorText)
-    $sf = New-Object System.Drawing.StringFormat
-    $sf.Alignment = [System.Drawing.StringAlignment]::Near
-    $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
-    $textRect = New-Object System.Drawing.RectangleF($tabRect.X + 16, $tabRect.Y, ($tabRect.Width - 20), $tabRect.Height)
-    $e.Graphics.DrawString($tp.Text, $fontToUse, $textBrush, $textRect, $sf)
-    $textBrush.Dispose()
+        $fontToUse = if ($isSelected) { $FontNavBold } else { $FontNav }
+        $textBrush = New-Object System.Drawing.SolidBrush($ColorText)
+        $sf = New-Object System.Drawing.StringFormat
+        $sf.Alignment = [System.Drawing.StringAlignment]::Near
+        $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
+        $textX = $rx + 16
+        $textY = $ry
+        $textW = $rw - 20
+        $textH = $rh
+        $textRect = New-Object System.Drawing.RectangleF([float]$textX, [float]$textY, [float]$textW, [float]$textH)
+        $e.Graphics.DrawString($tp.Text, $fontToUse, $textBrush, $textRect, $sf)
+        $textBrush.Dispose()
 
-    if ($isSelected) {
-        $accentBrush = New-Object System.Drawing.SolidBrush($ColorPrimary)
-        $accentRect = New-Object System.Drawing.Rectangle($tabRect.X, $tabRect.Y, 3, $tabRect.Height)
-        $e.Graphics.FillRectangle($accentBrush, $accentRect)
-        $accentBrush.Dispose()
+        if ($isSelected) {
+            $accentBrush = New-Object System.Drawing.SolidBrush($ColorPrimary)
+            $e.Graphics.FillRectangle($accentBrush, $rx, $ry, 3, $rh)
+            $accentBrush.Dispose()
+        }
+    } catch {
+        # Se o desenho customizado falhar por qualquer motivo, nao trava o
+        # form nem gera uma enxurrada de erros - a aba continua funcionando,
+        # so perde a estilizacao (fica com o visual padrao do TabControl).
     }
 })
 
