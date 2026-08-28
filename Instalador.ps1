@@ -617,7 +617,12 @@ function Download-DllFlyEmbarcado {
 }
 
 # ============================================================
-#  INTERFACE GRAFICA - COM MENU LATERAL (SIDEBAR)
+#  INTERFACE GRAFICA - MENU LATERAL VIA TABCONTROL NATIVO
+#  (Alignment=Left + desenho customizado, em vez de Paineis
+#  manuais. Isso elimina os bugs de layout: quem controla a
+#  posicao/visibilidade de cada "pagina" agora e o proprio
+#  motor de layout do TabControl - o mesmo mecanismo que ja
+#  funcionava sem bugs no script original com abas.)
 # ============================================================
 $ColorBackground = [System.Drawing.Color]::FromArgb(245,247,250)
 $ColorSurface    = [System.Drawing.Color]::White
@@ -650,118 +655,61 @@ $form.BackColor = $ColorBackground
 $form.Font = $FontNormal
 $form.MinimumSize = New-Object System.Drawing.Size(900, 750)
 
-# ----- Painel principal (sidebar + conteudo) -----
+# ----- Painel principal -----
 $mainPanel = New-Object System.Windows.Forms.Panel
 $mainPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
 $form.Controls.Add($mainPanel)
 
-# ----- Sidebar -----
-$sidebarPanel = New-Object System.Windows.Forms.Panel
-$sidebarPanel.Dock = [System.Windows.Forms.DockStyle]::Left
-$sidebarPanel.Width = 210
-$sidebarPanel.BackColor = $ColorSidebar
-$mainPanel.Controls.Add($sidebarPanel)
+# ----- TabControl com abas verticais a esquerda (visual de sidebar) -----
+$tabControl = New-Object System.Windows.Forms.TabControl
+$tabControl.Dock = [System.Windows.Forms.DockStyle]::Fill
+$tabControl.Alignment = [System.Windows.Forms.TabAlignment]::Left
+$tabControl.Multiline = $true
+$tabControl.SizeMode = [System.Windows.Forms.TabSizeMode]::Fixed
+# Para TabAlignment Left/Right, ItemSize.Width = altura de cada aba,
+# ItemSize.Height = largura da faixa lateral (nossa "sidebar").
+$tabControl.ItemSize = New-Object System.Drawing.Size(48, 210)
+$tabControl.DrawMode = [System.Windows.Forms.TabDrawMode]::OwnerDrawFixed
+$tabControl.Padding = New-Object System.Drawing.Point(16, 6)
+$tabControl.Font = $FontNav
+$mainPanel.Controls.Add($tabControl)
 
-$sidebarBorder = New-Object System.Windows.Forms.Panel
-$sidebarBorder.Dock = [System.Windows.Forms.DockStyle]::Right
-$sidebarBorder.Width = 1
-$sidebarBorder.BackColor = $ColorBorder
-$sidebarPanel.Controls.Add($sidebarBorder)
+$tabControl.Add_DrawItem({
+    param($sender, $e)
+    $tp = $tabControl.TabPages[$e.Index]
+    $tabRect = $tabControl.GetTabRect($e.Index)
+    $isSelected = ($e.Index -eq $tabControl.SelectedIndex)
 
-# FlowLayoutPanel garante que o titulo e os botoes fiquem na ordem em que
-# sao adicionados (de cima para baixo), sem depender da ordem de Dock=Top
-# nem de BringToFront (que era a causa do titulo aparecer embaixo).
-$flowSidebarNav = New-Object System.Windows.Forms.FlowLayoutPanel
-$flowSidebarNav.Dock = [System.Windows.Forms.DockStyle]::Top
-$flowSidebarNav.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
-$flowSidebarNav.WrapContents = $false
-$flowSidebarNav.AutoSize = $true
-$flowSidebarNav.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
-$flowSidebarNav.BackColor = $ColorSidebar
-$sidebarPanel.Controls.Add($flowSidebarNav)
+    $bgColor = if ($isSelected) { $ColorSidebarSel } else { $ColorSidebar }
+    $bgBrush = New-Object System.Drawing.SolidBrush($bgColor)
+    $e.Graphics.FillRectangle($bgBrush, $tabRect)
+    $bgBrush.Dispose()
 
-$lblSidebarTitle = New-Object System.Windows.Forms.Label
-$lblSidebarTitle.Text = "MCNTV Installer"
-$lblSidebarTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
-$lblSidebarTitle.ForeColor = $ColorText
-$lblSidebarTitle.AutoSize = $false
-$lblSidebarTitle.Width = 208
-$lblSidebarTitle.Height = 55
-$lblSidebarTitle.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
-$lblSidebarTitle.Padding = New-Object System.Windows.Forms.Padding(16, 0, 0, 0)
-$flowSidebarNav.Controls.Add($lblSidebarTitle)
+    $fontToUse = if ($isSelected) { $FontNavBold } else { $FontNav }
+    $textBrush = New-Object System.Drawing.SolidBrush($ColorText)
+    $sf = New-Object System.Drawing.StringFormat
+    $sf.Alignment = [System.Drawing.StringAlignment]::Near
+    $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
+    $textRect = New-Object System.Drawing.RectangleF($tabRect.X + 16, $tabRect.Y, ($tabRect.Width - 20), $tabRect.Height)
+    $e.Graphics.DrawString($tp.Text, $fontToUse, $textBrush, $textRect, $sf)
+    $textBrush.Dispose()
 
-# ----- Painel de conteudo (onde as "paginas" aparecem) -----
-$contentPanel = New-Object System.Windows.Forms.Panel
-$contentPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
-$contentPanel.BackColor = $ColorBackground
-$mainPanel.Controls.Add($contentPanel)
-
-# ----- Definicao dos itens de navegacao -----
-$NavItems = [ordered]@{
-    "Configuração do Sistema" = "config"
-    "Instalar Aplicativos"    = "install"
-    "Gerenciar Aplicativos"   = "uninstall"
-    "Ativar Windows"          = "activate"
-    "SITEF"                   = "sitef"
-}
-
-$script:NavButtons = @{}
-$script:PagePanels = @{}
-
-function Set-ActivePage {
-    param($key)
-    # Em vez de alternar Visible (que deixava o TableLayoutPanel da pagina
-    # calculando larguras erradas ao reaparecer), todas as paginas ficam
-    # sempre visiveis, sobrepostas (Dock=Fill), e so a pagina ativa e trazida
-    # para frente com BringToFront. Isso evita o glitch de layout/paginas
-    # cortadas ao trocar de secao.
-    if ($script:PagePanels.ContainsKey($key)) {
-        $script:PagePanels[$key].BringToFront()
-        $script:PagePanels[$key].PerformLayout()
-        $script:PagePanels[$key].Refresh()
+    if ($isSelected) {
+        $accentBrush = New-Object System.Drawing.SolidBrush($ColorPrimary)
+        $accentRect = New-Object System.Drawing.Rectangle($tabRect.X, $tabRect.Y, 3, $tabRect.Height)
+        $e.Graphics.FillRectangle($accentBrush, $accentRect)
+        $accentBrush.Dispose()
     }
-    foreach ($k in $script:NavButtons.Keys) {
-        $btn = $script:NavButtons[$k]
-        if ($k -eq $key) {
-            $btn.BackColor = $ColorSidebarSel
-            $btn.Font = $FontNavBold
-        } else {
-            $btn.BackColor = $ColorSidebar
-            $btn.Font = $FontNav
-        }
-    }
-}
-
-foreach ($label in $NavItems.Keys) {
-    $key = $NavItems[$label]
-    $btnNav = New-Object System.Windows.Forms.Button
-    $btnNav.Text = "   $label"
-    $btnNav.Font = $FontNav
-    $btnNav.ForeColor = $ColorText
-    $btnNav.BackColor = $ColorSidebar
-    $btnNav.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnNav.FlatAppearance.BorderSize = 0
-    $btnNav.FlatAppearance.MouseOverBackColor = $ColorSidebarSel
-    $btnNav.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
-    $btnNav.Width = 208
-    $btnNav.Height = 44
-    $btnNav.Margin = New-Object System.Windows.Forms.Padding(0)
-    $btnNav.Cursor = [System.Windows.Forms.Cursors]::Hand
-    $btnNav.Tag = $key
-    $btnNav.Add_Click({ Set-ActivePage -key $this.Tag }.GetNewClosure())
-    $flowSidebarNav.Controls.Add($btnNav)
-    $script:NavButtons[$key] = $btnNav
-}
+})
 
 # ============================================================
-#  PAGINA 1: CONFIGURAÇÃO (2 colunas)
+#  ABA 1: CONFIGURAÇÃO (2 colunas)
 # ============================================================
-$pageConfig = New-Object System.Windows.Forms.Panel
-$pageConfig.Dock = [System.Windows.Forms.DockStyle]::Fill
-$pageConfig.BackColor = $ColorBackground
-$contentPanel.Controls.Add($pageConfig)
-$script:PagePanels["config"] = $pageConfig
+$tabConfig = New-Object System.Windows.Forms.TabPage
+$tabConfig.Text = "Configuração do Sistema"
+$tabConfig.BackColor = $ColorBackground
+$tabConfig.Padding = New-Object System.Windows.Forms.Padding(0)
+$tabControl.TabPages.Add($tabConfig)
 
 $mainTableConfig = New-Object System.Windows.Forms.TableLayoutPanel
 $mainTableConfig.Dock = [System.Windows.Forms.DockStyle]::Fill
@@ -770,7 +718,7 @@ $mainTableConfig.RowCount = 2
 $mainTableConfig.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
 $mainTableConfig.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
 $mainTableConfig.Padding = New-Object System.Windows.Forms.Padding(20)
-$pageConfig.Controls.Add($mainTableConfig)
+$tabConfig.Controls.Add($mainTableConfig)
 
 $panelCheck = New-Object System.Windows.Forms.Panel
 $panelCheck.Dock = [System.Windows.Forms.DockStyle]::Fill
@@ -871,13 +819,12 @@ $btnRun.Margin = New-Object System.Windows.Forms.Padding(20, 0, 0, 0)
 $flowButtons.Controls.Add($btnRun)
 
 # ============================================================
-#  PAGINA 2: INSTALAR APLICATIVOS
+#  ABA 2: INSTALAR APLICATIVOS
 # ============================================================
-$pageInstall = New-Object System.Windows.Forms.Panel
-$pageInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
-$pageInstall.BackColor = $ColorBackground
-$contentPanel.Controls.Add($pageInstall)
-$script:PagePanels["install"] = $pageInstall
+$tabInstall = New-Object System.Windows.Forms.TabPage
+$tabInstall.Text = "Instalar Aplicativos"
+$tabInstall.BackColor = $ColorBackground
+$tabControl.TabPages.Add($tabInstall)
 
 $tableInstall = New-Object System.Windows.Forms.TableLayoutPanel
 $tableInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
@@ -886,7 +833,7 @@ $tableInstall.RowCount = 2
 $tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
 $tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
 $tableInstall.Padding = New-Object System.Windows.Forms.Padding(20)
-$pageInstall.Controls.Add($tableInstall)
+$tabInstall.Controls.Add($tableInstall)
 
 $panelInstallList = New-Object System.Windows.Forms.Panel
 $panelInstallList.Dock = [System.Windows.Forms.DockStyle]::Fill
@@ -967,13 +914,12 @@ $btnInstallSelected.Anchor = [System.Windows.Forms.AnchorStyles]::Left
 $panelInstallButton.Controls.Add($btnInstallSelected)
 
 # ============================================================
-#  PAGINA 3: GERENCIAR APLICATIVOS
+#  ABA 3: GERENCIAR APLICATIVOS
 # ============================================================
-$pageUninstall = New-Object System.Windows.Forms.Panel
-$pageUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
-$pageUninstall.BackColor = $ColorBackground
-$contentPanel.Controls.Add($pageUninstall)
-$script:PagePanels["uninstall"] = $pageUninstall
+$tabUninstall = New-Object System.Windows.Forms.TabPage
+$tabUninstall.Text = "Gerenciar Aplicativos"
+$tabUninstall.BackColor = $ColorBackground
+$tabControl.TabPages.Add($tabUninstall)
 
 $tableUninstall = New-Object System.Windows.Forms.TableLayoutPanel
 $tableUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
@@ -983,7 +929,7 @@ $tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.
 $tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
 $tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
 $tableUninstall.Padding = New-Object System.Windows.Forms.Padding(20)
-$pageUninstall.Controls.Add($tableUninstall)
+$tabUninstall.Controls.Add($tableUninstall)
 
 $lblUninstallInfo = New-Object System.Windows.Forms.Label
 $lblUninstallInfo.Text = "Atualize a lista e selecione o que deseja remover:"
@@ -1039,13 +985,12 @@ $btnUninstallSelected.Margin = New-Object System.Windows.Forms.Padding(15, 0, 0,
 $flowUninstallButtons.Controls.Add($btnUninstallSelected)
 
 # ============================================================
-#  PAGINA 4: ATIVAR WINDOWS
+#  ABA 4: ATIVAR WINDOWS
 # ============================================================
-$pageActivate = New-Object System.Windows.Forms.Panel
-$pageActivate.Dock = [System.Windows.Forms.DockStyle]::Fill
-$pageActivate.BackColor = $ColorBackground
-$contentPanel.Controls.Add($pageActivate)
-$script:PagePanels["activate"] = $pageActivate
+$tabActivate = New-Object System.Windows.Forms.TabPage
+$tabActivate.Text = "Ativar Windows"
+$tabActivate.BackColor = $ColorBackground
+$tabControl.TabPages.Add($tabActivate)
 
 $flowActivate = New-Object System.Windows.Forms.FlowLayoutPanel
 $flowActivate.Dock = [System.Windows.Forms.DockStyle]::Fill
@@ -1053,7 +998,7 @@ $flowActivate.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
 $flowActivate.AutoScroll = $true
 $flowActivate.WrapContents = $false
 $flowActivate.Padding = New-Object System.Windows.Forms.Padding(30, 25, 20, 20)
-$pageActivate.Controls.Add($flowActivate)
+$tabActivate.Controls.Add($flowActivate)
 
 $lblActivateTitle = New-Object System.Windows.Forms.Label
 $lblActivateTitle.Text = "Ativação do Windows"
@@ -1084,13 +1029,12 @@ $btnCustomActivate.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 20)
 $flowActivate.Controls.Add($btnCustomActivate)
 
 # ============================================================
-#  PAGINA 5: SITEF
+#  ABA 5: SITEF
 # ============================================================
-$pageSitef = New-Object System.Windows.Forms.Panel
-$pageSitef.Dock = [System.Windows.Forms.DockStyle]::Fill
-$pageSitef.BackColor = $ColorBackground
-$contentPanel.Controls.Add($pageSitef)
-$script:PagePanels["sitef"] = $pageSitef
+$tabSitef = New-Object System.Windows.Forms.TabPage
+$tabSitef.Text = "SITEF"
+$tabSitef.BackColor = $ColorBackground
+$tabControl.TabPages.Add($tabSitef)
 
 $tableSitef = New-Object System.Windows.Forms.TableLayoutPanel
 $tableSitef.Dock = [System.Windows.Forms.DockStyle]::Fill
@@ -1101,7 +1045,7 @@ $tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Wind
 $tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
 $tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
 $tableSitef.Padding = New-Object System.Windows.Forms.Padding(20)
-$pageSitef.Controls.Add($tableSitef)
+$tabSitef.Controls.Add($tableSitef)
 
 # Título
 $lblSitefTitle = New-Object System.Windows.Forms.Label
@@ -1126,7 +1070,7 @@ $tableSitef.Controls.Add($lblSitefDesc, 0, 1)
 
 # Painel de botões – com AutoSize
 $flowSitefButtons = New-Object System.Windows.Forms.FlowLayoutPanel
-$flowSitefButtons.Dock = [System.Windows.Forms.DockStyle]::Fill
+$flowSitefButtons.Dock = [System.Windows.Forms.DockStyle]::Top
 $flowSitefButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
 $flowSitefButtons.WrapContents = $true
 $flowSitefButtons.AutoSize = $true
@@ -1595,30 +1539,8 @@ $btnClearLog.Add_Click({
 # ============================================================
 #  CARREGAR LISTA DE INSTALADOS E ATIVAR PAGINA INICIAL
 # ============================================================
-function Force-FullRelayout {
-    # Corrige o bug classico do WinForms em que paineis aninhados (Panel >
-    # TableLayoutPanel > FlowLayoutPanel) calculam largura/posicao erradas na
-    # primeira exibicao, deixando conteudo "atras" da sidebar ate a janela
-    # ser redimensionada manualmente. Forcamos isso programaticamente
-    # "cutucando" o tamanho do form em 1px para cima e para baixo, o que
-    # obriga TODOS os controles dockados/ancorados a recalcular seus bounds.
-    $originalSize = $form.Size
-    $form.SuspendLayout()
-    $form.Size = New-Object System.Drawing.Size(($originalSize.Width + 1), ($originalSize.Height + 1))
-    $form.ResumeLayout($true)
-    $form.PerformLayout()
-    $form.SuspendLayout()
-    $form.Size = $originalSize
-    $form.ResumeLayout($true)
-    $form.PerformLayout()
-    foreach ($p in $script:PagePanels.Values) { $p.PerformLayout() }
-    $contentPanel.PerformLayout()
-    $mainPanel.PerformLayout()
-}
-
 $form.Add_Shown({
-    Set-ActivePage -key "config"
-    Force-FullRelayout
+    $tabControl.SelectedIndex = 0
     if ($btnRefreshInstalled -ne $null) {
         $btnRefreshInstalled.PerformClick()
     } else {
