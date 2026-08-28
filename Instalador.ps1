@@ -1,9 +1,3 @@
-<#
-    ProvisioningTool.ps1
-    Interface com MENU LATERAL (sidebar) em vez de abas.
-    Cada seção é um painel que aparece/desaparece ao clicar no menu.
-#>
-
 # ============================================================
 #  EXECUCAO LOCAL OU VIA "irm ... | iex"
 # ============================================================
