@@ -668,16 +668,28 @@ $sidebarBorder.Width = 1
 $sidebarBorder.BackColor = $ColorBorder
 $sidebarPanel.Controls.Add($sidebarBorder)
 
+# FlowLayoutPanel garante que o titulo e os botoes fiquem na ordem em que
+# sao adicionados (de cima para baixo), sem depender da ordem de Dock=Top
+# nem de BringToFront (que era a causa do titulo aparecer embaixo).
+$flowSidebarNav = New-Object System.Windows.Forms.FlowLayoutPanel
+$flowSidebarNav.Dock = [System.Windows.Forms.DockStyle]::Top
+$flowSidebarNav.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
+$flowSidebarNav.WrapContents = $false
+$flowSidebarNav.AutoSize = $true
+$flowSidebarNav.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+$flowSidebarNav.BackColor = $ColorSidebar
+$sidebarPanel.Controls.Add($flowSidebarNav)
+
 $lblSidebarTitle = New-Object System.Windows.Forms.Label
 $lblSidebarTitle.Text = "MCNTV Installer"
 $lblSidebarTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
 $lblSidebarTitle.ForeColor = $ColorText
 $lblSidebarTitle.AutoSize = $false
-$lblSidebarTitle.Dock = [System.Windows.Forms.DockStyle]::Top
+$lblSidebarTitle.Width = 208
 $lblSidebarTitle.Height = 55
 $lblSidebarTitle.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
 $lblSidebarTitle.Padding = New-Object System.Windows.Forms.Padding(16, 0, 0, 0)
-$sidebarPanel.Controls.Add($lblSidebarTitle)
+$flowSidebarNav.Controls.Add($lblSidebarTitle)
 
 # ----- Painel de conteudo (onde as "paginas" aparecem) -----
 $contentPanel = New-Object System.Windows.Forms.Panel
@@ -699,8 +711,13 @@ $script:PagePanels = @{}
 
 function Set-ActivePage {
     param($key)
-    foreach ($k in $script:PagePanels.Keys) {
-        $script:PagePanels[$k].Visible = ($k -eq $key)
+    # Em vez de alternar Visible (que deixava o TableLayoutPanel da pagina
+    # calculando larguras erradas ao reaparecer), todas as paginas ficam
+    # sempre visiveis, sobrepostas (Dock=Fill), e so a pagina ativa e trazida
+    # para frente com BringToFront. Isso evita o glitch de layout/paginas
+    # cortadas ao trocar de secao.
+    if ($script:PagePanels.ContainsKey($key)) {
+        $script:PagePanels[$key].BringToFront()
     }
     foreach ($k in $script:NavButtons.Keys) {
         $btn = $script:NavButtons[$k]
@@ -714,7 +731,6 @@ function Set-ActivePage {
     }
 }
 
-$navTop = 55
 foreach ($label in $NavItems.Keys) {
     $key = $NavItems[$label]
     $btnNav = New-Object System.Windows.Forms.Button
@@ -726,16 +742,15 @@ foreach ($label in $NavItems.Keys) {
     $btnNav.FlatAppearance.BorderSize = 0
     $btnNav.FlatAppearance.MouseOverBackColor = $ColorSidebarSel
     $btnNav.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
-    $btnNav.Dock = [System.Windows.Forms.DockStyle]::Top
+    $btnNav.Width = 208
     $btnNav.Height = 44
+    $btnNav.Margin = New-Object System.Windows.Forms.Padding(0)
     $btnNav.Cursor = [System.Windows.Forms.Cursors]::Hand
     $btnNav.Tag = $key
     $btnNav.Add_Click({ Set-ActivePage -key $this.Tag }.GetNewClosure())
-    $sidebarPanel.Controls.Add($btnNav)
-    $btnNav.BringToFront()
+    $flowSidebarNav.Controls.Add($btnNav)
     $script:NavButtons[$key] = $btnNav
 }
-$lblSidebarTitle.BringToFront()
 
 # ============================================================
 #  PAGINA 1: CONFIGURAÇÃO (2 colunas)
@@ -743,7 +758,6 @@ $lblSidebarTitle.BringToFront()
 $pageConfig = New-Object System.Windows.Forms.Panel
 $pageConfig.Dock = [System.Windows.Forms.DockStyle]::Fill
 $pageConfig.BackColor = $ColorBackground
-$pageConfig.Visible = $false
 $contentPanel.Controls.Add($pageConfig)
 $script:PagePanels["config"] = $pageConfig
 
@@ -860,7 +874,6 @@ $flowButtons.Controls.Add($btnRun)
 $pageInstall = New-Object System.Windows.Forms.Panel
 $pageInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
 $pageInstall.BackColor = $ColorBackground
-$pageInstall.Visible = $false
 $contentPanel.Controls.Add($pageInstall)
 $script:PagePanels["install"] = $pageInstall
 
@@ -957,7 +970,6 @@ $panelInstallButton.Controls.Add($btnInstallSelected)
 $pageUninstall = New-Object System.Windows.Forms.Panel
 $pageUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
 $pageUninstall.BackColor = $ColorBackground
-$pageUninstall.Visible = $false
 $contentPanel.Controls.Add($pageUninstall)
 $script:PagePanels["uninstall"] = $pageUninstall
 
@@ -1030,7 +1042,6 @@ $flowUninstallButtons.Controls.Add($btnUninstallSelected)
 $pageActivate = New-Object System.Windows.Forms.Panel
 $pageActivate.Dock = [System.Windows.Forms.DockStyle]::Fill
 $pageActivate.BackColor = $ColorBackground
-$pageActivate.Visible = $false
 $contentPanel.Controls.Add($pageActivate)
 $script:PagePanels["activate"] = $pageActivate
 
@@ -1076,7 +1087,6 @@ $flowActivate.Controls.Add($btnCustomActivate)
 $pageSitef = New-Object System.Windows.Forms.Panel
 $pageSitef.Dock = [System.Windows.Forms.DockStyle]::Fill
 $pageSitef.BackColor = $ColorBackground
-$pageSitef.Visible = $false
 $contentPanel.Controls.Add($pageSitef)
 $script:PagePanels["sitef"] = $pageSitef
 
