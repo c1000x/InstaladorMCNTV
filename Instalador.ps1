@@ -1579,7 +1579,7 @@ $btnSitefInstall = New-Button -Text "Instalar SITEF" -Size ([System.Drawing.Size
 }
 $flowSitefButtons.Controls.Add($btnSitefInstall)
 
-$btnDllFly = New-Button -Text "DLL_FLY (11.6 MB)" -Size ([System.Drawing.Size]::new(160,35)) -BackColor $ColorPrimary -ForeColor White -Font $FontButtonBold -Action {
+$btnDllFly = New-Button -Text "DLL_FLY" -Size ([System.Drawing.Size]::new(160,35)) -BackColor $ColorPrimary -ForeColor White -Font $FontButtonBold -Action {
     $btnDllFly.Enabled = $false
     $txtSitefLog.Clear()
     $progressSitef.Value = 0
@@ -1592,7 +1592,7 @@ $btnDllFly = New-Button -Text "DLL_FLY (11.6 MB)" -Size ([System.Drawing.Size]::
 }
 $flowSitefButtons.Controls.Add($btnDllFly)
 
-$btnDllFlyEmbarcado = New-Button -Text "DLL_FLY_EMBARCADO (11.6 MB)" -Size ([System.Drawing.Size]::new(170,35)) -BackColor $ColorPrimary -ForeColor White -Font $FontButtonBold -Action {
+$btnDllFlyEmbarcado = New-Button -Text "DLL_FLY_EMBARCADO" -Size ([System.Drawing.Size]::new(170,35)) -BackColor $ColorPrimary -ForeColor White -Font $FontButtonBold -Action {
     $btnDllFlyEmbarcado.Enabled = $false
     $txtSitefLog.Clear()
     $progressSitef.Value = 0
