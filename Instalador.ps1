@@ -718,6 +718,8 @@ function Set-ActivePage {
     # cortadas ao trocar de secao.
     if ($script:PagePanels.ContainsKey($key)) {
         $script:PagePanels[$key].BringToFront()
+        $script:PagePanels[$key].PerformLayout()
+        $script:PagePanels[$key].Refresh()
     }
     foreach ($k in $script:NavButtons.Keys) {
         $btn = $script:NavButtons[$k]
@@ -1593,8 +1595,30 @@ $btnClearLog.Add_Click({
 # ============================================================
 #  CARREGAR LISTA DE INSTALADOS E ATIVAR PAGINA INICIAL
 # ============================================================
+function Force-FullRelayout {
+    # Corrige o bug classico do WinForms em que paineis aninhados (Panel >
+    # TableLayoutPanel > FlowLayoutPanel) calculam largura/posicao erradas na
+    # primeira exibicao, deixando conteudo "atras" da sidebar ate a janela
+    # ser redimensionada manualmente. Forcamos isso programaticamente
+    # "cutucando" o tamanho do form em 1px para cima e para baixo, o que
+    # obriga TODOS os controles dockados/ancorados a recalcular seus bounds.
+    $originalSize = $form.Size
+    $form.SuspendLayout()
+    $form.Size = New-Object System.Drawing.Size(($originalSize.Width + 1), ($originalSize.Height + 1))
+    $form.ResumeLayout($true)
+    $form.PerformLayout()
+    $form.SuspendLayout()
+    $form.Size = $originalSize
+    $form.ResumeLayout($true)
+    $form.PerformLayout()
+    foreach ($p in $script:PagePanels.Values) { $p.PerformLayout() }
+    $contentPanel.PerformLayout()
+    $mainPanel.PerformLayout()
+}
+
 $form.Add_Shown({
     Set-ActivePage -key "config"
+    Force-FullRelayout
     if ($btnRefreshInstalled -ne $null) {
         $btnRefreshInstalled.PerformClick()
     } else {
