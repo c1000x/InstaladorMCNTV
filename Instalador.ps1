@@ -1,5 +1,6 @@
 # ============================================================
-#  EXECUCAO LOCAL OU VIA "irm ... | iex"
+#  PROVISIONING TOOL - LAYOUT COMPACTO EM GRID (ALINHADO)
+#  Uso interno - Windows PowerShell 5.1+
 # ============================================================
 $scriptPath = $PSCommandPath
 if ([string]::IsNullOrWhiteSpace($scriptPath)) {
@@ -10,1856 +11,574 @@ if ([string]::IsNullOrWhiteSpace($scriptPath)) {
     [System.IO.File]::WriteAllText($scriptPath, $scriptContent, (New-Object System.Text.UTF8Encoding($false)))
 }
 
-# ============================================================
-#  AUTO-ELEVACAO
-# ============================================================
+# AUTO-ELEVAÇÃO
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
+    if ([string]::IsNullOrWhiteSpace($PSCommandPath)) {
+        $tempScript = Join-Path $env:TEMP "ProvisioningTool_Elevated.ps1"
+        $scriptContent = $MyInvocation.MyCommand.Definition
+        [System.IO.File]::WriteAllText($tempScript, $scriptContent, (New-Object System.Text.UTF8Encoding($false)))
+        $scriptPath = $tempScript
+    }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = "powershell.exe"
     $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
     $psi.Verb = "runas"
-    try { [System.Diagnostics.Process]::Start($psi) | Out-Null } catch { Write-Host "Elevacao cancelada pelo usuario." }
+    try { [System.Diagnostics.Process]::Start($psi) | Out-Null } catch { Write-Host "Elevação cancelada." }
     exit
 }
+
+# FORÇAR TLS 1.2 GLOBALMENTE PARA REQUISIÇÕES HTTPS
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+$ErrorActionPreference = "Continue"
 
-# ============================================================
-#  BOTAO PERSONALIZADO
-# ============================================================
-$CustomScriptUrl   = "https://get.activated.win"
-$CustomScriptLabel = "Ativar Windows"
-
-# ============================================================
-#  LISTAS DE APLICATIVOS
-# ============================================================
+# LISTAS DE APLICATIVOS
 $ChocoApps = @("googlechrome")
 $WingetApps = @(
     "AnyDesk.AnyDesk",
     "Adobe.Acrobat.Reader.64-bit",
     "Oracle.JavaRuntimeEnvironment",
-    "Mozilla.Firefox.pt-BR",
+    "Mozilla.Firefox",
     "7zip.7zip",
     "Microsoft.Office"
 )
 $WingetStoreApps = @("9WZDNCRFJBMP")
 
-# ============================================================
-#  DIRETORIOS DE LOG
-# ============================================================
+# LOGS
 $ScriptDir = Split-Path -Parent $scriptPath
 $LogsDir   = Join-Path $ScriptDir "logs"
 if (-not (Test-Path $LogsDir)) { New-Item -Path $LogsDir -ItemType Directory -Force | Out-Null }
 
 $Timestamp   = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $LogFilePath = Join-Path $LogsDir "provisionamento_$Timestamp.log"
-$ReportPath  = Join-Path $LogsDir "relatorio_$Timestamp.txt"
 
-$script:Results = [ordered]@{}
-$script:CancelRequested = $false
+function Safe-Log {
+    param([string]$Message)
+    if ($null -ne $txtLog -and -not $txtLog.IsDisposed) {
+        $txtLog.AppendText("$Message`r`n")
+        $txtLog.SelectionStart = $txtLog.Text.Length
+        $txtLog.ScrollToCaret()
+        [System.Windows.Forms.Application]::DoEvents()
+    }
+    if ($LogFilePath) { Add-Content -Path $LogFilePath -Value $Message -Encoding UTF8 -ErrorAction SilentlyContinue }
+}
 
-# ============================================================
-#  FUNCOES DE CADA ETAPA (Provisionamento)
-# ============================================================
-function Step-RestorePoint {
-    param($Log, [bool]$DryRun)
-    $Log.Invoke("== Ponto de restauracao ==")
-    if ($DryRun) { $Log.Invoke("[SIMULACAO] Criaria um ponto de restauracao antes das alteracoes."); return }
+function Update-Status {
+    param([string]$Text, [int]$Progress = -1)
+    if ($null -ne $lblStatus) { $lblStatus.Text = $Text }
+    if ($Progress -ge 0 -and $null -ne $progressBar) { 
+        $progressBar.Style = [System.Windows.Forms.ProgressBarStyle]::Blocks
+        $progressBar.Value = $Progress 
+    }
+    [System.Windows.Forms.Application]::DoEvents()
+}
+
+# ------------------------------------------------------------
+# FUNÇÕES DE SISTEMA
+# ------------------------------------------------------------
+function Add-DefenderExclusion {
+    param([string]$FolderPath)
     try {
-        Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
-        Checkpoint-Computer -Description "Antes do provisionamento" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
-        $Log.Invoke("Ponto de restauracao criado.")
+        if (-not (Test-Path $FolderPath)) { New-Item -ItemType Directory -Path $FolderPath -Force | Out-Null }
+        Safe-Log "Adicionando $FolderPath às exceções do Windows Defender..."
+        Add-MpPreference -ExclusionPath $FolderPath -ErrorAction SilentlyContinue
+        Safe-Log "Pasta $FolderPath configurada nas exceções."
     } catch {
-        $Log.Invoke("Aviso: nao foi possivel criar ponto de restauracao (pode ja existir um nas ultimas 24h, ou System Restore estar desativado). $($_.Exception.Message)")
+        Safe-Log "Aviso ao adicionar exceção no Defender: $($_.Exception.Message)"
     }
 }
 
-function Step-VersoesAnteriores {
-    param($Log, [bool]$DryRun)
-    $drive = $env:SystemDrive
-    $Log.Invoke("== Habilitar Versoes Anteriores (Shadow Copies) em $drive ==")
-    if ($DryRun) {
-        $Log.Invoke("[SIMULACAO] Ativaria System Restore em $drive, reservaria 10% do volume para copias de sombra e agendaria snapshots a cada 4h.")
-        return
-    }
+function Download-DllFlyPackage {
+    param([string]$PackageName, [string]$Url)
+    $sitefDir = "C:\SITEF"
+    Add-DefenderExclusion -FolderPath $sitefDir
+
+    $zipPath = Join-Path $env:TEMP "$PackageName.zip"
     try {
-        Enable-ComputerRestore -Drive "$drive\" -ErrorAction Stop
-        $Log.Invoke("System Restore ativado em $drive")
+        Update-Status "Baixando $PackageName..." 30
+        Safe-Log "Baixando pacote $PackageName..."
+        
+        $userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        Invoke-WebRequest -Uri $Url -OutFile $zipPath -UserAgent $userAgent -UseBasicParsing
+
+        Update-Status "Extraindo $PackageName..." 70
+        Safe-Log "Extraindo $PackageName para $sitefDir..."
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $sitefDir)
+        
+        Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
+        Update-Status "Concluído!" 100
+        Safe-Log "Pacote $PackageName instalado com sucesso em $sitefDir!"
     } catch {
-        $Log.Invoke("Aviso ao ativar System Restore: $($_.Exception.Message)")
+        Update-Status "Erro." 0
+        Safe-Log "ERRO ao processar ${PackageName}: $($_.Exception.Message)"
     }
-
-    $Log.Invoke("Reservando espaco para copias de sombra (10% do volume)...")
-    vssadmin resize shadowstorage /for="$drive" /on="$drive" /maxsize=10% 2>&1 | ForEach-Object { $Log.Invoke($_) }
-
-    $Log.Invoke("Criando snapshot inicial...")
-    vssadmin create shadow /for="$drive" 2>&1 | ForEach-Object { $Log.Invoke($_) }
-
-    schtasks /create /tn "VersoesAnteriores_ShadowCopy" /tr "vssadmin create shadow /for=$drive" /sc hourly /mo 4 /ru "SYSTEM" /rl highest /f | Out-Null
-    $Log.Invoke("Tarefa agendada 'VersoesAnteriores_ShadowCopy' criada (snapshot a cada 4h).")
-    $Log.Invoke("A partir do proximo snapshot, a aba 'Versoes Anteriores' nas propriedades de pastas em $drive vai mostrar as copias.")
 }
 
-function Step-IconesAreaTrabalho {
-    param($Log, [bool]$DryRun)
-    $Log.Invoke("== Icones Este Computador / Pasta do Usuario ==")
-    if ($DryRun) { $Log.Invoke("[SIMULACAO] Ativaria os icones e reiniciaria o Explorer."); return }
-    $path = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
-    New-Item -Path $path -Force | Out-Null
-    New-ItemProperty -Path $path -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -PropertyType DWord -Value 0 -Force | Out-Null
-    New-ItemProperty -Path $path -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -PropertyType DWord -Value 0 -Force | Out-Null
-    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-    Start-Process explorer
-    $Log.Invoke("Icones configurados e Explorer reiniciado.")
-}
+function Install-Sitef {
+    $sitefDir = "C:\SITEF"
+    Add-DefenderExclusion -FolderPath $sitefDir
 
-function Step-Telemetria {
-    param($Log, [bool]$DryRun)
-    $Log.Invoke("== Telemetria ==")
-    if ($DryRun) { $Log.Invoke("[SIMULACAO] Desativaria a telemetria via GPO local."); return }
-    $path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
-    New-Item -Path $path -Force | Out-Null
-    Set-ItemProperty -Path $path -Name "AllowTelemetry" -Value 0 -Force
-    $Log.Invoke("Telemetria desativada.")
-}
+    $packages = @(
+        @{ Name = "Certificado"; Url = "http://gsurf.com.br/lib/win/certificado.zip"; ZipName = "certificado.zip"; Folder = "Certificado" },
+        @{ Name = "GSClient (GSurf)"; Url = "https://gsurf.com.br/lib/win/gsclient.zip"; ZipName = "gsclient.zip"; Folder = "gsclient" }
+    )
 
-function Step-Energia {
-    param($Log, [bool]$DryRun)
-    $Log.Invoke("== Plano de energia ==")
-    if ($DryRun) { $Log.Invoke("[SIMULACAO] Ajustaria monitor/disco/suspensao/hibernacao para nunca desligar."); return }
-    powercfg /change monitor-timeout-ac 0
-    powercfg /change monitor-timeout-dc 0
-    powercfg /change standby-timeout-ac 0
-    powercfg /change standby-timeout-dc 0
-    powercfg /change hibernate-timeout-ac 0
-    powercfg /change hibernate-timeout-dc 0
-    powercfg /change disk-timeout-ac 0
-    powercfg /change disk-timeout-dc 0
-    $Log.Invoke("Plano de energia ajustado.")
-}
+    $userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-function Step-RegiaoIdioma {
-    param($Log, [bool]$DryRun)
-    $Log.Invoke("== Fuso horario e localizacao (Brasil) ==")
-    if ($DryRun) { $Log.Invoke("[SIMULACAO] Definiria fuso horario de Brasilia e localizacao Brasil."); return }
-    try {
-        Set-TimeZone -Id "E. South America Standard Time" -ErrorAction Stop
-        $Log.Invoke("Fuso horario (Brasilia) definido com sucesso.")
-    } catch {
-        $Log.Invoke("Aviso: não foi possível definir o fuso horário: $($_.Exception.Message)")
-    }
-
-    try {
-        Set-WinHomeLocation -GeoId 76 -ErrorAction Stop
-        $Log.Invoke("Localização (Brasil) definida com sucesso.")
-    } catch {
-        $Log.Invoke("Aviso: não foi possível definir a localização (GeoId 76). Isso é comum em edições sem suporte a idiomas adicionais. O fuso horário já foi ajustado.")
+    foreach ($pkg in $packages) {
+        $extractDir = Join-Path $sitefDir $pkg.Folder
+        $zipPath    = Join-Path $sitefDir $pkg.ZipName
         try {
-            Set-WinHomeLocation -GeoId 76 -ErrorAction SilentlyContinue
-        } catch {
-            # Ignora
-        }
-    }
-    $Log.Invoke("Configuração de região concluída.")
-}
+            if (Test-Path $extractDir) { Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
+            New-Item -Path $extractDir -ItemType Directory -Force | Out-Null
 
-function Step-Debloat {
-    param($Log, [bool]$DryRun)
-    $Log.Invoke("== Remover apps padrao (usuario atual + provisionamento) ==")
-    $apps = @("3dbuilder","bingweather","xboxapp","zunemusic","officehub","skypeapp")
-    if ($DryRun) { $Log.Invoke("[SIMULACAO] Removeria: $($apps -join ', ')"); return }
-    foreach ($a in $apps) {
-        Get-AppxPackage "*$a*" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue
-        Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -like "*$a*" } |
-            Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
-        $Log.Invoke("Removido (se existia): $a")
-    }
-}
+            Update-Status "Baixando $($pkg.Name)..." 25
+            Safe-Log "Baixando pacote $($pkg.Name)..."
+            
+            Invoke-WebRequest -Uri $pkg.Url -OutFile $zipPath -UserAgent $userAgent -UseBasicParsing
+            Safe-Log "Tamanho do arquivo baixado: $((Get-Item $zipPath).Length) bytes"
 
-function Ensure-ChocoAvailable {
-    param($Log)
-    if (Get-Command choco -ErrorAction SilentlyContinue) { return $true }
-    $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-    $userPath    = [System.Environment]::GetEnvironmentVariable("Path", "User")
-    $env:Path = "$machinePath;$userPath"
-    if (Get-Command choco -ErrorAction SilentlyContinue) { return $true }
-    $chocoBin = Join-Path $env:ProgramData "chocolatey\bin"
-    if (Test-Path (Join-Path $chocoBin "choco.exe")) {
-        $env:Path += ";$chocoBin"
-        return $true
-    }
-    if ($Log) { $Log.Invoke("Chocolatey nao encontrado. Marque e execute a etapa 'Instalar/Atualizar Chocolatey' primeiro.") }
-    return $false
-}
+            Update-Status "Extraindo $($pkg.Name)..." 50
+            Safe-Log "Extraindo $($pkg.Name) em $extractDir..."
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractDir)
 
-function Step-Chocolatey {
-    param($Log, [bool]$DryRun)
-    $Log.Invoke("== Chocolatey ==")
-    if (Get-Command choco -ErrorAction SilentlyContinue) {
-        $Log.Invoke("Chocolatey ja instalado, pulando.")
-        return
-    }
-    if ($DryRun) { $Log.Invoke("[SIMULACAO] Instalaria o Chocolatey."); return }
-    Set-ExecutionPolicy Bypass -Scope Process -Force
-    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-    $env:Path += ";$env:ProgramData\chocolatey\bin"
-    $Log.Invoke("Chocolatey instalado.")
-}
+            Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
+            Safe-Log "Pacote $($pkg.Name) extraído com sucesso em $extractDir."
 
-function Step-WingetUpgradeAll {
-    param($Log, [bool]$DryRun)
-    $Log.Invoke("== Preparando winget e atualizando todos os apps instalados ==")
-    if (-not $DryRun) {
-        try {
-            Install-PackageProvider -Name NuGet -Force -ErrorAction Stop | Out-Null
-            if (-not (Get-Module -ListAvailable -Name Microsoft.WinGet.Client)) {
-                Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery -Confirm:$false -ErrorAction Stop
+            Update-Status "Executando instalador de $($pkg.Name)..." 75
+            
+            $installer = Get-ChildItem -Path $extractDir -Include "*.exe","*.msi" -File -Recurse | Select-Object -First 1
+
+            if ($null -ne $installer) {
+                Safe-Log "Executando instalador principal: $($installer.FullName)..."
+                if ($installer.Extension -ieq ".msi") {
+                    Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$($installer.FullName)`"" -WorkingDirectory $installer.DirectoryName -Wait
+                } else {
+                    Start-Process -FilePath $installer.FullName -WorkingDirectory $installer.DirectoryName -Wait
+                }
+                Safe-Log "Instalação de $($installer.Name) concluída."
+            } else {
+                Safe-Log "Aviso: Nenhum instalador encontrado em $extractDir."
             }
-            Repair-WinGetPackageManager -ErrorAction SilentlyContinue
-            winget source update | Out-Null
         } catch {
-            $Log.Invoke("Aviso ao preparar winget: $($_.Exception.Message)")
+            Safe-Log "ERRO ao processar $($pkg.Name): $($_.Exception.Message)"
         }
     }
-    if ($DryRun) { $Log.Invoke("[SIMULACAO] winget upgrade --all"); return }
-    $Log.Invoke("Atualizando todos os pacotes via winget")
-    winget upgrade --all --accept-source-agreements --accept-package-agreements --silent 2>&1 | ForEach-Object { $Log.Invoke($_) }
+
+    Update-Status "Iniciando serviços do GSurf..." 90
+    Safe-Log "Configurando e iniciando serviços do GSurf..."
+
+    $gsurfServices = @("GSurfRSA Listener", "GSCliSvc", "GSurf")
+
+    foreach ($serviceName in $gsurfServices) {
+        $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($null -ne $svc) {
+            try {
+                Safe-Log "Definindo o serviço '$serviceName' para inicialização automática..."
+                Set-Service -Name $serviceName -StartupType Automatic -ErrorAction SilentlyContinue
+                
+                if ($svc.Status -ne 'Running') {
+                    Safe-Log "Iniciando serviço '$serviceName'..."
+                    Start-Service -Name $serviceName -ErrorAction Stop
+                    Safe-Log "Serviço '$serviceName' iniciado com sucesso!"
+                } else {
+                    Safe-Log "O serviço '$serviceName' já está rodando."
+                }
+            } catch {
+                Safe-Log "Erro ao iniciar o serviço ${serviceName}: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    Update-Status "Concluído!" 100
+    Safe-Log "Instalação e inicialização dos serviços SiTef / GSURF finalizada com sucesso."
 }
 
-function Step-TarefaLimpeza {
-    param($Log, [bool]$DryRun)
-    $Log.Invoke("== Tarefa agendada de limpeza de disco ==")
-    if ($DryRun) { $Log.Invoke("[SIMULACAO] Criaria tarefa 'LimpezaDisco' (domingos 03:00, como SYSTEM)."); return }
-    schtasks /create /tn "LimpezaDisco" /tr "cleanmgr /sagerun:1" /sc weekly /d SUN /st 03:00 /ru "SYSTEM" /rl highest /f | Out-Null
-    $Log.Invoke("Tarefa 'LimpezaDisco' criada/atualizada.")
+function Instalar-MitryusWeb {
+    $vetorDir   = "C:\VETOR"
+    $tempExtract = Join-Path $env:TEMP "MitryusTemp"
+    $zipUrl     = "http://mitryusweb.com.br/mitryusweb/versao/versao.zip"
+    $zipPath    = Join-Path $env:TEMP "versao_mitryus.zip"
+
+    Add-DefenderExclusion -FolderPath $vetorDir
+
+    try {
+        Update-Status "Baixando MitryusWeb..." 20
+        Safe-Log "Iniciando download do MitryusWeb ($zipUrl)..."
+        
+        $userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UserAgent $userAgent -UseBasicParsing
+
+        Safe-Log "Download concluído! Tamanho: $((Get-Item $zipPath).Length) bytes."
+
+        Update-Status "Extraindo arquivos..." 40
+        
+        if (Test-Path $tempExtract) { Remove-Item -Path $tempExtract -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -Path $tempExtract -ItemType Directory -Force | Out-Null
+
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $tempExtract)
+        Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
+
+        Update-Status "Organizando estrutura em C:\VETOR..." 60
+        if (-not (Test-Path $vetorDir)) { New-Item -Path $vetorDir -ItemType Directory -Force | Out-Null }
+
+        $sourcePath = $tempExtract
+        if (Test-Path (Join-Path $tempExtract "VETOR")) {
+            $sourcePath = Join-Path $tempExtract "VETOR"
+        }
+
+        Get-ChildItem -Path $sourcePath | Copy-Item -Destination $vetorDir -Recurse -Force
+        Remove-Item -Path $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+
+        Update-Status "Copiando DLLs para pastas do sistema..." 80
+        $dllSource = Join-Path $vetorDir "MITRYUSWEB\DLL"
+
+        if (Test-Path $dllSource) {
+            $sys32  = "$env:SystemRoot\System32"
+            $syswow = "$env:SystemRoot\SysWOW64"
+
+            Safe-Log "Copiando DLLs de $dllSource para $sys32 e $syswow..."
+
+            $dllFiles = Get-ChildItem -Path $dllSource -Filter "*.dll" -File
+            foreach ($dll in $dllFiles) {
+                Copy-Item -Path $dll.FullName -Destination $sys32 -Force -ErrorAction SilentlyContinue
+                if (Test-Path $syswow) {
+                    Copy-Item -Path $dll.FullName -Destination $syswow -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Safe-Log "$($dllFiles.Count) DLL(s) copiadas com sucesso para o sistema."
+        } else {
+            Safe-Log "Aviso: A pasta de DLLs '$dllSource' não foi encontrada em $vetorDir."
+        }
+
+        Update-Status "Concluído!" 100
+        Safe-Log "Instalação do MitryusWeb finalizada com sucesso."
+    } catch {
+        Update-Status "Erro." 0
+        Safe-Log "ERRO ao instalar MitryusWeb: $($_.Exception.Message)"
+    }
 }
 
-# ============================================================
-#  CATALOGO DE PROGRAMAS
-# ============================================================
+function Instalar-MitryusFly {
+    Update-Status "Instalando MitryusFly..." 50
+    Safe-Log "Instalando MitryusFly via Windows Store..."
+    Start-Process -FilePath "winget.exe" -ArgumentList "install --id 9N5Z8N96BZBQ --source msstore --accept-source-agreements --accept-package-agreements --silent" -Wait -NoNewWindow
+    Update-Status "Concluído!" 100
+    Safe-Log "MitryusFly finalizado."
+}
+
+# ETAPAS DE CONFIGURAÇÃO
+function Step-RestorePoint { Enable-ComputerRestore -Drive "$env:SystemDrive\"; Checkpoint-Computer -Description "Provisionamento" -RestorePointType "MODIFY_SETTINGS" -ErrorAction SilentlyContinue }
+function Step-IconesAreaTrabalho { $p = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"; New-Item -Path $p -Force | Out-Null; Set-ItemProperty -Path $p -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Force; Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue; Start-Process explorer }
+function Step-Telemetria { Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Force }
+function Step-Energia { powercfg /change monitor-timeout-ac 0; powercfg /change standby-timeout-ac 0 }
+function Step-RegiaoIdioma { Set-TimeZone -Id "E. South America Standard Time" -ErrorAction SilentlyContinue; Set-WinHomeLocation -GeoId 76 -ErrorAction SilentlyContinue }
+function Step-Debloat { @("3dbuilder","bingweather","xboxapp") | ForEach-Object { Get-AppxPackage "*$_*" | Remove-AppxPackage -ErrorAction SilentlyContinue } }
+function Step-Chocolatey { if (-not (Get-Command choco -ErrorAction SilentlyContinue)) { iwr https://community.chocolatey.org/install.ps1 -UseBasicParsing | iex } }
+function Step-WingetUpgradeAll { winget upgrade --all --accept-source-agreements --accept-package-agreements --silent }
+
 function Build-AppCatalogLabels {
     $script:AppCatalogMap = @{}
     $labels = New-Object System.Collections.ArrayList
-    foreach ($id in $ChocoApps) {
-        $label = "[Choco] $id"
-        $script:AppCatalogMap[$label] = @{ Manager = "choco"; Id = $id }
-        [void]$labels.Add($label)
-    }
-    foreach ($id in $WingetApps) {
-        $label = "[Winget] $id"
-        $script:AppCatalogMap[$label] = @{ Manager = "winget"; Id = $id }
-        [void]$labels.Add($label)
-    }
-    foreach ($id in $WingetStoreApps) {
-        $label = "[Store] $id"
-        $script:AppCatalogMap[$label] = @{ Manager = "wingetStore"; Id = $id }
-        [void]$labels.Add($label)
-    }
+    foreach ($id in $ChocoApps) { $l = "[Choco] $id"; $script:AppCatalogMap[$l] = @{ Manager = "choco"; Id = $id }; [void]$labels.Add($l) }
+    foreach ($id in $WingetApps) { $l = "[Winget] $id"; $script:AppCatalogMap[$l] = @{ Manager = "winget"; Id = $id }; [void]$labels.Add($l) }
+    foreach ($id in $WingetStoreApps) { $l = "[Store] $id"; $script:AppCatalogMap[$l] = @{ Manager = "wingetStore"; Id = $id }; [void]$labels.Add($l) }
     return $labels
 }
 
 function Get-InstalledProgramsList {
-    $paths = @(
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
-        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
-    )
-    Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -and (-not $_.SystemComponent) -and $_.UninstallString } |
-        Select-Object DisplayName, UninstallString, QuietUninstallString |
-        Sort-Object DisplayName
+    $paths = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*")
+    Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and $_.UninstallString } | Select-Object DisplayName, UninstallString, QuietUninstallString | Sort-Object DisplayName
 }
 
 # ============================================================
-#  FUNÇÕES SITEF (COM CORREÇÃO DAS DLLS)
+#  ESTILO E LAYOUT DA INTERFACE (GRID ALINHADO COM ALTURA AJUSTADA)
 # ============================================================
-function Install-Sitef {
-    $log = $script:SitefLogDelegate
-    $log.Invoke("=== INICIANDO INSTALAÇÃO SITEF ===")
-    $log.Invoke("")
-
-    $sitefDir = "C:\SITEF"
-    $zipUrls = @(
-        @{ url = "http://gsurf.com.br/lib/win/certificado.zip"; nome = "certificado.zip" },
-        @{ url = "http://gsurf.com.br/lib/win/gsclient.zip"; nome = "gsclient.zip" }
-    )
-
-    if (-not (Test-Path $sitefDir)) {
-        $log.Invoke("Criando diretório $sitefDir ...")
-        try {
-            New-Item -ItemType Directory -Path $sitefDir -Force | Out-Null
-            $log.Invoke("Diretório criado com sucesso.")
-        } catch {
-            $log.Invoke("ERRO ao criar diretório: $($_.Exception.Message)")
-            return
-        }
-    } else {
-        $log.Invoke("Diretório $sitefDir já existe.")
-    }
-
-    $progressSitef.Maximum = $zipUrls.Count * 2
-    $progressSitef.Value = 0
-
-    foreach ($item in $zipUrls) {
-        $url = $item.url
-        $fileName = $item.nome
-        $zipPath = Join-Path $sitefDir $fileName
-        $extractPath = Join-Path $sitefDir ([System.IO.Path]::GetFileNameWithoutExtension($fileName))
-
-        if (Test-Path $zipPath) {
-            $log.Invoke("Arquivo $fileName já existe. Verificando integridade...")
-            try {
-                if (-not (Test-Path $extractPath)) { New-Item -ItemType Directory -Path $extractPath -Force | Out-Null }
-                Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-                $log.Invoke("Extraído com sucesso (arquivo existente).")
-                $progressSitef.Value += 2
-                continue
-            } catch {
-                $log.Invoke("Falha na extração do arquivo existente. Removendo e baixando novamente...")
-                Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-                Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
-            }
-        }
-
-        $log.Invoke("Baixando $fileName ...")
-        try {
-            $webClient = New-Object System.Net.WebClient
-            $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            $webClient.DownloadFile($url, $zipPath)
-            $log.Invoke("Download concluído: $zipPath")
-            $progressSitef.Value += 1
-        } catch {
-            $log.Invoke("ERRO ao baixar $url : $($_.Exception.Message)")
-            return
-        }
-
-        $bytes = [System.IO.File]::ReadAllBytes($zipPath)
-        $isZip = $bytes.Count -ge 4 -and $bytes[0] -eq 0x50 -and $bytes[1] -eq 0x4B -and $bytes[2] -eq 0x03 -and $bytes[3] -eq 0x04
-        if (-not $isZip) {
-            $log.Invoke("ERRO: O arquivo baixado não é um ZIP válido (cabeçalho inválido).")
-            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-            return
-        }
-
-        $log.Invoke("Extraindo $fileName para $extractPath ...")
-        try {
-            if (-not (Test-Path $extractPath)) { New-Item -ItemType Directory -Path $extractPath -Force | Out-Null }
-            Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-            $log.Invoke("Extraído com sucesso.")
-            $progressSitef.Value += 1
-        } catch {
-            $log.Invoke("ERRO ao extrair com Expand-Archive: $($_.Exception.Message)")
-            $log.Invoke("Tentando extrair com System.IO.Compression.ZipFile (fallback)...")
-            try {
-                [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath, $true)
-                $log.Invoke("Extraído com sucesso via fallback.")
-                $progressSitef.Value += 1
-            } catch {
-                $log.Invoke("Falha na extração: $($_.Exception.Message)")
-                Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-                return
-            }
-        }
-    }
-
-    $log.Invoke("")
-    $log.Invoke("Arquivos baixados e extraídos.")
-
-    $msiPath = Get-ChildItem -Path $sitefDir -Recurse -Filter "GSurfRSA_Listener_Setup.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
-    $exePath = Get-ChildItem -Path $sitefDir -Recurse -Filter "InstaladorGSurf.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-
-    if (-not $msiPath) {
-        $log.Invoke("ERRO: Arquivo GSurfRSA_Listener_Setup.msi não encontrado.")
-        return
-    }
-    if (-not $exePath) {
-        $log.Invoke("ERRO: Arquivo InstaladorGSurf.exe não encontrado.")
-        return
-    }
-
-    $log.Invoke("")
-    $log.Invoke("Executando instalador MSI: $($msiPath.FullName)")
-    try {
-        Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$($msiPath.FullName)`"" -Wait
-        $log.Invoke("Instalador MSI concluído.")
-    } catch {
-        $log.Invoke("ERRO ao executar MSI: $($_.Exception.Message)")
-    }
-
-    $log.Invoke("Executando instalador EXE: $($exePath.FullName)")
-    try {
-        Start-Process -FilePath $exePath.FullName -Wait
-        $log.Invoke("Instalador EXE concluído.")
-    } catch {
-        $log.Invoke("ERRO ao executar EXE: $($_.Exception.Message)")
-    }
-
-    $log.Invoke("")
-    $log.Invoke("Aguardando 5 segundos antes de iniciar o serviço...")
-    Start-Sleep -Seconds 5
-
-    $serviceName = "GSurfRSA Listener"
-    $log.Invoke("Verificando serviço '$serviceName'...")
-    $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-    if ($svc) {
-        if ($svc.Status -eq 'Stopped') {
-            try {
-                Start-Service -Name $serviceName -ErrorAction Stop
-                $log.Invoke("Serviço '$serviceName' iniciado com sucesso.")
-            } catch {
-                $log.Invoke("ERRO ao iniciar serviço: $($_.Exception.Message)")
-            }
-        } else {
-            $log.Invoke("Serviço já está em execução (Status: $($svc.Status)).")
-        }
-    } else {
-        $log.Invoke("Serviço '$serviceName' não encontrado.")
-    }
-
-    $log.Invoke("")
-    $log.Invoke("=== INSTALAÇÃO SITEF CONCLUÍDA ===")
-    $progressSitef.Value = $progressSitef.Maximum
-    [System.Windows.Forms.MessageBox]::Show("Instalação SITEF concluída! Verifique o log para detalhes.", "SITEF")
-}
-
-function Download-DllFly {
-    $log = $script:SitefLogDelegate
-    $log.Invoke("=== BAIXANDO DLL_FLY ===")
-    $log.Invoke("")
-
-    $progressSitef.Maximum = 100
-    $progressSitef.Value = 0
-
-    $baseDir = "C:\SITEF"
-    $targetDir = Join-Path $baseDir "DLL_FLY"
-    $zipUrl = "https://github.com/c1000x/InstaladorMCNTV/raw/a4dbdb2b2fbbea02d3d4109220199490e4e9e1bf/DLL_FLY.zip"
-    $zipFile = Join-Path $baseDir "DLL_FLY.zip"
-    $tempExtractDir = Join-Path $baseDir "DLL_FLY_temp"
-
-    if (-not (Test-Path $targetDir)) {
-        $log.Invoke("Criando diretório $targetDir ...")
-        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-        $log.Invoke("Diretório criado.")
-    }
-
-    $log.Invoke("Baixando DLL_FLY.zip (11.6 MB) ...")
-    try {
-        $webClient = New-Object System.Net.WebClient
-        $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        $webClient.DownloadFile($zipUrl, $zipFile)
-        $log.Invoke("Download concluído: $zipFile")
-        $progressSitef.Value = 30
-    } catch {
-        $log.Invoke("ERRO ao baixar DLL_FLY.zip: $($_.Exception.Message)")
-        return
-    }
-
-    $log.Invoke("Extraindo DLL_FLY.zip ...")
-    try {
-        if (Test-Path $tempExtractDir) { Remove-Item $tempExtractDir -Recurse -Force }
-        New-Item -ItemType Directory -Path $tempExtractDir -Force | Out-Null
-        Expand-Archive -Path $zipFile -DestinationPath $tempExtractDir -Force
-        $log.Invoke("Extraído para pasta temporária.")
-        $progressSitef.Value = 60
-    } catch {
-        $log.Invoke("ERRO ao extrair DLL_FLY.zip: $($_.Exception.Message)")
-        Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
-        Remove-Item $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-        return
-    }
-
-    # Verificar se a extração criou uma única subpasta
-    $subItems = Get-ChildItem -Path $tempExtractDir
-    if ($subItems.Count -eq 1 -and $subItems[0].PSIsContainer) {
-        $sourceDir = $subItems[0].FullName
-        $log.Invoke("Detectada subpasta raiz: $($subItems[0].Name). Movendo conteúdo para $targetDir ...")
-        Get-ChildItem -Path $sourceDir -Recurse -File | ForEach-Object {
-            $relativePath = $_.FullName.Substring($sourceDir.Length + 1)
-            $destFile = Join-Path $targetDir $relativePath
-            $destDir = Split-Path $destFile -Parent
-            if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-            Move-Item -Path $_.FullName -Destination $destFile -Force
-        }
-    } else {
-        $log.Invoke("Movendo arquivos diretamente para $targetDir ...")
-        Get-ChildItem -Path $tempExtractDir -Recurse -File | ForEach-Object {
-            $relativePath = $_.FullName.Substring($tempExtractDir.Length + 1)
-            $destFile = Join-Path $targetDir $relativePath
-            $destDir = Split-Path $destFile -Parent
-            if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-            Move-Item -Path $_.FullName -Destination $destFile -Force
-        }
-    }
-
-    Remove-Item $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-    $log.Invoke("Arquivos organizados.")
-    $progressSitef.Value = 80
-
-    Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
-    $log.Invoke("Arquivo ZIP removido.")
-
-    $log.Invoke("Adicionando exclusão no Windows Defender para: $targetDir")
-    try {
-        Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
-        $log.Invoke("Exclusão adicionada com sucesso.")
-        $progressSitef.Value = 95
-    } catch {
-        $log.Invoke("Aviso: não foi possível adicionar exclusão no Windows Defender: $($_.Exception.Message)")
-        $progressSitef.Value = 95
-    }
-
-    $log.Invoke("")
-    $log.Invoke("=== DLL_FLY INSTALADO COM SUCESSO ===")
-    $progressSitef.Value = 100
-    [System.Windows.Forms.MessageBox]::Show("DLL_FLY baixado, extraído e adicionado à exclusão do Windows Defender com sucesso em:`n$targetDir", "DLL_FLY")
-}
-
-function Download-DllFlyEmbarcado {
-    $log = $script:SitefLogDelegate
-    $log.Invoke("=== BAIXANDO DLL_FLY_EMBARCADO ===")
-    $log.Invoke("")
-
-    $progressSitef.Maximum = 100
-    $progressSitef.Value = 0
-
-    $baseDir = "C:\SITEF"
-    $targetDir = Join-Path $baseDir "DLL_FLY_EMBARCADO"
-    $zipUrl = "https://github.com/c1000x/InstaladorMCNTV/raw/a4dbdb2b2fbbea02d3d4109220199490e4e9e1bf/DLL_FLY_EMBARCADO.zip"
-    $zipFile = Join-Path $baseDir "DLL_FLY_EMBARCADO.zip"
-    $tempExtractDir = Join-Path $baseDir "DLL_FLY_EMBARCADO_temp"
-
-    if (-not (Test-Path $targetDir)) {
-        $log.Invoke("Criando diretório $targetDir ...")
-        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-        $log.Invoke("Diretório criado.")
-    }
-
-    $log.Invoke("Baixando DLL_FLY_EMBARCADO.zip (11.6 MB) ...")
-    try {
-        $webClient = New-Object System.Net.WebClient
-        $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        $webClient.DownloadFile($zipUrl, $zipFile)
-        $log.Invoke("Download concluído: $zipFile")
-        $progressSitef.Value = 30
-    } catch {
-        $log.Invoke("ERRO ao baixar DLL_FLY_EMBARCADO.zip: $($_.Exception.Message)")
-        return
-    }
-
-    $log.Invoke("Extraindo DLL_FLY_EMBARCADO.zip ...")
-    try {
-        if (Test-Path $tempExtractDir) { Remove-Item $tempExtractDir -Recurse -Force }
-        New-Item -ItemType Directory -Path $tempExtractDir -Force | Out-Null
-        Expand-Archive -Path $zipFile -DestinationPath $tempExtractDir -Force
-        $log.Invoke("Extraído para pasta temporária.")
-        $progressSitef.Value = 60
-    } catch {
-        $log.Invoke("ERRO ao extrair DLL_FLY_EMBARCADO.zip: $($_.Exception.Message)")
-        Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
-        Remove-Item $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-        return
-    }
-
-    $subItems = Get-ChildItem -Path $tempExtractDir
-    if ($subItems.Count -eq 1 -and $subItems[0].PSIsContainer) {
-        $sourceDir = $subItems[0].FullName
-        $log.Invoke("Detectada subpasta raiz: $($subItems[0].Name). Movendo conteúdo para $targetDir ...")
-        Get-ChildItem -Path $sourceDir -Recurse -File | ForEach-Object {
-            $relativePath = $_.FullName.Substring($sourceDir.Length + 1)
-            $destFile = Join-Path $targetDir $relativePath
-            $destDir = Split-Path $destFile -Parent
-            if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-            Move-Item -Path $_.FullName -Destination $destFile -Force
-        }
-    } else {
-        $log.Invoke("Movendo arquivos diretamente para $targetDir ...")
-        Get-ChildItem -Path $tempExtractDir -Recurse -File | ForEach-Object {
-            $relativePath = $_.FullName.Substring($tempExtractDir.Length + 1)
-            $destFile = Join-Path $targetDir $relativePath
-            $destDir = Split-Path $destFile -Parent
-            if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-            Move-Item -Path $_.FullName -Destination $destFile -Force
-        }
-    }
-
-    Remove-Item $tempExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-    $log.Invoke("Arquivos organizados.")
-    $progressSitef.Value = 80
-
-    Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
-    $log.Invoke("Arquivo ZIP removido.")
-
-    $log.Invoke("Adicionando exclusão no Windows Defender para: $targetDir")
-    try {
-        Add-MpPreference -ExclusionPath $targetDir -ErrorAction Stop
-        $log.Invoke("Exclusão adicionada com sucesso.")
-        $progressSitef.Value = 95
-    } catch {
-        $log.Invoke("Aviso: não foi possível adicionar exclusão no Windows Defender: $($_.Exception.Message)")
-        $progressSitef.Value = 95
-    }
-
-    $log.Invoke("")
-    $log.Invoke("=== DLL_FLY_EMBARCADO INSTALADO COM SUCESSO ===")
-    $progressSitef.Value = 100
-    [System.Windows.Forms.MessageBox]::Show("DLL_FLY_EMBARCADO baixado, extraído e adicionado à exclusão do Windows Defender com sucesso em:`n$targetDir", "DLL_FLY_EMBARCADO")
-}
-
-# ============================================================
-#  FUNCAO INSTALADOR MITRYUS
-# ============================================================
-function Install-MitryusWeb {
-    $log = $script:MitryusLogDelegate
-    $progressMitryus.Value = 0
-
-    $url = "http://mitryusweb.com.br/mitryusweb/versao/versao.zip"
-    $destino = "C:\MITRYUSWEB"
-    $tempRoot = Join-Path $env:TEMP "MCNTV_MITRYUSWEB"
-    $zipPath = Join-Path $tempRoot "versao.zip"
-    $extractPath = Join-Path $tempRoot "extract"
-    $system32 = Join-Path $env:WINDIR "System32"
-    $syswow64 = Join-Path $env:WINDIR "SysWOW64"
-
-    $log.Invoke("=== INSTALACAO MITRYUSWEB ===")
-    $log.Invoke("")
-    $log.Invoke("Fonte: $url")
-    $log.Invoke("Destino: $destino")
-    $log.Invoke("")
-
-    try {
-        if (Test-Path $tempRoot) {
-            Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
-
-        $log.Invoke("[1/4] Baixando versao.zip...")
-        $webClient = New-Object System.Net.WebClient
-        $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        $webClient.DownloadFile($url, $zipPath)
-        $webClient.Dispose()
-
-        if (-not (Test-Path $zipPath)) {
-            throw "O arquivo versao.zip nao foi baixado."
-        }
-        if ((Get-Item $zipPath).Length -eq 0) {
-            throw "O arquivo versao.zip foi baixado vazio."
-        }
-        $progressMitryus.Value = 25
-        $log.Invoke("Download concluido.")
-        $log.Invoke("")
-
-        $log.Invoke("[2/4] Extraindo pacote...")
-        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-        $progressMitryus.Value = 45
-        $log.Invoke("Extracao concluida.")
-
-        $pastaMitryus = Get-ChildItem -Path $extractPath -Directory -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -ieq "MITRYUSWEB" } |
-            Select-Object -First 1
-
-        if (-not $pastaMitryus) {
-            throw "A pasta MITRYUSWEB nao foi encontrada dentro do ZIP."
-        }
-
-        $log.Invoke("Pasta encontrada: $($pastaMitryus.FullName)")
-        $log.Invoke("")
-
-        $log.Invoke("[3/4] Instalando em C:\MITRYUSWEB...")
-
-        # So substitui a instalacao antiga depois que a nova foi extraida corretamente.
-        if (Test-Path $destino) {
-            $backup = Join-Path $tempRoot "MITRYUSWEB_old"
-            $log.Invoke("Instalacao anterior encontrada. Criando copia temporaria...")
-            Move-Item -Path $destino -Destination $backup -Force
-        }
-
-        try {
-            New-Item -ItemType Directory -Path $destino -Force | Out-Null
-            Get-ChildItem -Path $pastaMitryus.FullName -Force | ForEach-Object {
-                Copy-Item -Path $_.FullName -Destination $destino -Recurse -Force
-            }
-        }
-        catch {
-            if (Test-Path $destino) {
-                Remove-Item $destino -Recurse -Force -ErrorAction SilentlyContinue
-            }
-            if (Test-Path $backup) {
-                Move-Item -Path $backup -Destination $destino -Force -ErrorAction SilentlyContinue
-            }
-            throw
-        }
-
-        $progressMitryus.Value = 65
-        $log.Invoke("MITRYUSWEB instalado em C:\MITRYUSWEB.")
-        $log.Invoke("")
-
-        $log.Invoke("[4/4] Instalando DLLs...")
-        $pastaDLL = Join-Path $destino "DLL"
-        $falhas = New-Object System.Collections.ArrayList
-        $sucesso = 0
-
-        if (Test-Path $pastaDLL) {
-            $dlls = @(Get-ChildItem -Path $pastaDLL -Filter "*.dll" -File -Recurse)
-            $log.Invoke("DLLs encontradas: $($dlls.Count)")
-            $log.Invoke("")
-
-            foreach ($dll in $dlls) {
-                $ok32 = $true
-                $okWow = $true
-                $log.Invoke("DLL: $($dll.Name)")
-
-                try {
-                    Copy-Item -Path $dll.FullName -Destination $system32 -Force -ErrorAction Stop
-                    $log.Invoke("  System32: OK")
-                }
-                catch {
-                    $ok32 = $false
-                    $log.Invoke("  System32: BLOQUEADA - $($_.Exception.Message)")
-                }
-
-                try {
-                    Copy-Item -Path $dll.FullName -Destination $syswow64 -Force -ErrorAction Stop
-                    $log.Invoke("  SysWOW64: OK")
-                }
-                catch {
-                    $okWow = $false
-                    $log.Invoke("  SysWOW64: BLOQUEADA - $($_.Exception.Message)")
-                }
-
-                if ($ok32 -and $okWow) {
-                    $sucesso++
-                } else {
-                    [void]$falhas.Add($dll.Name)
-                }
-                $log.Invoke("")
-            }
-        }
-        else {
-            $log.Invoke("Aviso: a pasta C:\MITRYUSWEB\DLL nao foi encontrada.")
-        }
-
-        $progressMitryus.Value = 100
-        $log.Invoke("============================================================")
-        $log.Invoke("INSTALACAO MITRYUSWEB CONCLUIDA")
-        $log.Invoke("============================================================")
-        $log.Invoke("")
-        $log.Invoke("Pasta: C:\MITRYUSWEB")
-        $log.Invoke("DLLs instaladas nos dois diretorios: $sucesso")
-
-        if ($falhas.Count -gt 0) {
-            $log.Invoke("")
-            $log.Invoke("AVISO: $($falhas.Count) DLL(s) nao puderam ser copiadas para um ou ambos os diretorios porque estavam em uso:")
-            foreach ($nome in $falhas) { $log.Invoke(" - $nome") }
-            $log.Invoke("")
-            $log.Invoke("Feche os programas que usam essas DLLs e execute a instalacao novamente se necessario.")
-        }
-
-        $log.Invoke("")
-        $log.Invoke("=== FIM MITRYUSWEB ===")
-
-        [System.Windows.Forms.MessageBox]::Show(
-            "MITRYUSWEB instalado em C:\MITRYUSWEB.`n`nDLLs bloqueadas: $($falhas.Count)`nConsulte o log para detalhes.",
-            "MITRYUSWEB",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            $(if ($falhas.Count -gt 0) { [System.Windows.Forms.MessageBoxIcon]::Warning } else { [System.Windows.Forms.MessageBoxIcon]::Information })
-        ) | Out-Null
-    }
-    catch {
-        $progressMitryus.Value = 0
-        $log.Invoke("")
-        $log.Invoke("============================================================")
-        $log.Invoke("ERRO NA INSTALACAO MITRYUSWEB")
-        $log.Invoke("============================================================")
-        $log.Invoke("$($_.Exception.Message)")
-        $log.Invoke("Linha: $($_.InvocationInfo.ScriptLineNumber)")
-        $log.Invoke("")
-        [System.Windows.Forms.MessageBox]::Show(
-            "A instalacao do MITRYUSWEB encontrou um erro:`n`n$($_.Exception.Message)",
-            "Erro - MITRYUSWEB",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        ) | Out-Null
-    }
-    finally {
-        if (Test-Path $tempRoot) {
-            Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
-
-# ============================================================
-#  MITRYUSFLY - INSTALACAO VIA WINGET
-# ============================================================
-
-function Instalar-MitryusFly {
-    param(
-        [System.Windows.Forms.TextBox]$LogBox,
-        [System.Windows.Forms.ProgressBar]$ProgressBar
-    )
-
-    try {
-        $ProgressBar.Style = "Continuous"
-        $ProgressBar.Value = 10
-        $LogBox.AppendText("`r`n=== INSTALACAO MITRYUSFLY ===`r`n")
-        $LogBox.AppendText("Executando: winget install 9N5Z8N96BZBQ`r`n")
-
-        if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-            throw "O winget nao foi encontrado neste computador."
-        }
-
-        $ProgressBar.Value = 20
-
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = "winget.exe"
-        $psi.Arguments = "install 9N5Z8N96BZBQ --accept-source-agreements --accept-package-agreements"
-        $psi.UseShellExecute = $false
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError = $true
-        $psi.CreateNoWindow = $true
-
-        $processo = New-Object System.Diagnostics.Process
-        $processo.StartInfo = $psi
-
-        [void]$processo.Start()
-
-        while (-not $processo.HasExited) {
-            $linha = $processo.StandardOutput.ReadLine()
-            if ($null -ne $linha -and $linha.Trim() -ne "") {
-                $LogBox.AppendText("$linha`r`n")
-            }
-
-            while (-not $processo.StandardError.EndOfStream) {
-                $erroLinha = $processo.StandardError.ReadLine()
-                if ($erroLinha) {
-                    $LogBox.AppendText("$erroLinha`r`n")
-                }
-            }
-
-            [System.Windows.Forms.Application]::DoEvents()
-            Start-Sleep -Milliseconds 100
-
-            if ($ProgressBar.Value -lt 95) {
-                $ProgressBar.Value += 1
-            }
-        }
-
-        while (-not $processo.StandardOutput.EndOfStream) {
-            $linha = $processo.StandardOutput.ReadLine()
-            if ($linha) {
-                $LogBox.AppendText("$linha`r`n")
-            }
-        }
-
-        while (-not $processo.StandardError.EndOfStream) {
-            $erroLinha = $processo.StandardError.ReadLine()
-            if ($erroLinha) {
-                $LogBox.AppendText("$erroLinha`r`n")
-            }
-        }
-
-        $codigo = $processo.ExitCode
-        $ProgressBar.Value = 100
-
-        if ($codigo -eq 0) {
-            $LogBox.AppendText("MITRYUSFLY instalado com sucesso.`r`n")
-            [System.Windows.Forms.MessageBox]::Show(
-                "MITRYUSFLY instalado com sucesso.",
-                "MITRYUSFLY",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Information
-            ) | Out-Null
-        }
-        else {
-            $LogBox.AppendText("O winget terminou com codigo $codigo.`r`n")
-            [System.Windows.Forms.MessageBox]::Show(
-                "O winget terminou com codigo $codigo.`r`n`r`nConsulte o log para verificar o resultado.",
-                "MITRYUSFLY",
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Warning
-            ) | Out-Null
-        }
-    }
-    catch {
-        $ProgressBar.Value = 0
-        $LogBox.AppendText("ERRO MITRYUSFLY: $($_.Exception.Message)`r`n")
-
-        [System.Windows.Forms.MessageBox]::Show(
-            $_.Exception.Message,
-            "Erro - MITRYUSFLY",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        ) | Out-Null
-    }
-}
-
-# ============================================================
-#  FUNÇÃO AUXILIAR PARA CRIAR BOTÕES PADRONIZADOS
-# ============================================================
-function New-Button {
-    param(
-        [string]$Text,
-        [System.Drawing.Size]$Size = [System.Drawing.Size]::new(120, 30),
-        [System.Drawing.Color]$BackColor = $ColorSurface,
-        [System.Drawing.Color]$ForeColor = $ColorText,
-        [System.Drawing.Font]$Font = $FontButton,
-        [System.Windows.Forms.FlatStyle]$FlatStyle = [System.Windows.Forms.FlatStyle]::Flat,
-        [System.Drawing.Color]$BorderColor = $ColorBorder,
-        [int]$Margin = 3,
-        [int]$Padding = 0,
-        [ScriptBlock]$Action = $null
-    )
+$ColorBg       = [System.Drawing.Color]::FromArgb(28, 28, 28)
+$ColorCard     = [System.Drawing.Color]::FromArgb(40, 40, 40)
+$ColorSidebar  = [System.Drawing.Color]::FromArgb(18, 20, 24)
+$ColorText     = [System.Drawing.Color]::FromArgb(240, 243, 246)
+$ColorMuted    = [System.Drawing.Color]::FromArgb(140, 148, 160)
+$ColorPrimary  = [System.Drawing.Color]::FromArgb(0, 122, 255)
+$ColorSuccess  = [System.Drawing.Color]::FromArgb(46, 160, 67)
+$ColorDanger   = [System.Drawing.Color]::FromArgb(218, 54, 51)
+
+$FontTitle     = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+$FontSubTitle  = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+$FontText      = New-Object System.Drawing.Font("Segoe UI", 8.5)
+$FontConsole   = New-Object System.Drawing.Font("Consolas", 8.5)
+
+function New-StyledButton {
+    param($Text, $Width=220, $Height=32, $BgColor=$ColorPrimary, $Action=$null)
     $btn = New-Object System.Windows.Forms.Button
     $btn.Text = $Text
-    $btn.Size = $Size
-    $btn.BackColor = $BackColor
-    $btn.ForeColor = $ForeColor
-    $btn.Font = $Font
-    $btn.FlatStyle = $FlatStyle
-    $btn.FlatAppearance.BorderColor = $BorderColor
-    if ($FlatStyle -eq [System.Windows.Forms.FlatStyle]::Flat) {
-        $btn.FlatAppearance.BorderSize = 1
-    } else {
-        $btn.FlatAppearance.BorderSize = 0
-    }
-    $btn.Margin = New-Object System.Windows.Forms.Padding($Margin)
-    if ($Padding -gt 0) {
-        $btn.Padding = New-Object System.Windows.Forms.Padding($Padding)
-    }
-    if ($Action) {
-        $btn.Add_Click($Action)
-    }
+    $btn.Size = New-Object System.Drawing.Size($Width, $Height)
+    $btn.BackColor = $BgColor
+    $btn.ForeColor = [System.Drawing.Color]::White
+    $btn.Font = $FontSubTitle
+    $btn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btn.FlatAppearance.BorderSize = 0
+    $btn.Cursor = [System.Windows.Forms.Cursors]::Hand
+    if ($Action) { $btn.Add_Click($Action) }
     return $btn
 }
 
-# ============================================================
-#  INTERFACE GRAFICA - MENU LATERAL VIA TABCONTROL NATIVO
-# ============================================================
-$ColorBackground = [System.Drawing.Color]::FromArgb(245,247,250)
-$ColorSurface    = [System.Drawing.Color]::White
-$ColorSidebar    = [System.Drawing.Color]::FromArgb(250,251,252)
-$ColorSidebarSel = [System.Drawing.Color]::FromArgb(228,238,250)
-$ColorText       = [System.Drawing.Color]::FromArgb(35,38,42)
-$ColorMuted      = [System.Drawing.Color]::FromArgb(95,102,110)
-$ColorPrimary    = [System.Drawing.Color]::FromArgb(0,120,215)
-$ColorSuccess    = [System.Drawing.Color]::FromArgb(40,150,90)
-$ColorDanger     = [System.Drawing.Color]::FromArgb(190,55,55)
-$ColorBorder     = [System.Drawing.Color]::FromArgb(210,215,222)
+# DIMENSÕES PADRÃO DOS CARDS PARA MANTER O GRID SIMÉTRICO
+$CardWidth  = 450
+$CardHeight = 290
 
-$FontNormal = New-Object System.Drawing.Font("Segoe UI", 9)
-$FontSmall  = New-Object System.Drawing.Font("Segoe UI", 8)
-$FontHeader = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
-$FontTitle  = New-Object System.Drawing.Font("Segoe UI Semibold", 18)
-$FontButton = New-Object System.Drawing.Font("Segoe UI", 9)
-$FontButtonBold = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
-$FontNav    = New-Object System.Drawing.Font("Segoe UI", 10)
-$FontNavBold = New-Object System.Drawing.Font("Segoe UI Semibold", 10)
+function New-CardGroup {
+    param($Title)
+    $grp = New-Object System.Windows.Forms.GroupBox
+    $grp.Text = " $Title "
+    $grp.Size = New-Object System.Drawing.Size($script:CardWidth, $script:CardHeight)
+    $grp.ForeColor = $ColorPrimary
+    $grp.Font = $FontSubTitle
+    $grp.BackColor = $ColorCard
+    $grp.Margin = New-Object System.Windows.Forms.Padding(10)
+    return $grp
+}
 
-# ----- Formulário -----
+# FORMULÁRIO PRINCIPAL COM ALTURA EXPANDIDA PARA 880px
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "instalador"
+$form.Text = "Provisioning Tool v3.0 - Direct Grid"
+$form.Size = New-Object System.Drawing.Size(980, 880)
 $form.StartPosition = "CenterScreen"
-$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
-$form.MaximizeBox = $true
-$form.MinimizeBox = $true
-$form.BackColor = $ColorBackground
-$form.Font = $FontNormal
-$form.MinimumSize = New-Object System.Drawing.Size(900, 750)
+$form.BackColor = $ColorBg
+$form.ForeColor = $ColorText
+$form.Font = $FontText
 
-# ----- Painel principal -----
-$mainPanel = New-Object System.Windows.Forms.Panel
-$mainPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
-$form.Controls.Add($mainPanel)
+# TOP HEADER
+$pnlHeader = New-Object System.Windows.Forms.Panel
+$pnlHeader.Dock = [System.Windows.Forms.DockStyle]::Top
+$pnlHeader.Height = 45
+$pnlHeader.BackColor = $ColorSidebar
+$form.Controls.Add($pnlHeader)
 
-# ----- TabControl com abas verticais a esquerda (visual de sidebar) -----
-$tabControl = New-Object System.Windows.Forms.TabControl
-$tabControl.Dock = [System.Windows.Forms.DockStyle]::Fill
-$tabControl.Alignment = [System.Windows.Forms.TabAlignment]::Left
-$tabControl.Multiline = $true
-$tabControl.SizeMode = [System.Windows.Forms.TabSizeMode]::Fixed
-$tabControl.ItemSize = New-Object System.Drawing.Size(48, 210)
-$tabControl.DrawMode = [System.Windows.Forms.TabDrawMode]::OwnerDrawFixed
-$tabControl.Padding = New-Object System.Drawing.Point(16, 6)
-$tabControl.Font = $FontNav
-$mainPanel.Controls.Add($tabControl)
+$lblAppTitle = New-Object System.Windows.Forms.Label
+$lblAppTitle.Text = "⚡ INSTALADOR MCNTV"
+$lblAppTitle.Font = $FontTitle
+$lblAppTitle.ForeColor = $ColorPrimary
+$lblAppTitle.AutoSize = $true
+$lblAppTitle.Location = New-Object System.Drawing.Point(15, 10)
+$pnlHeader.Controls.Add($lblAppTitle)
 
-$tabControl.Add_DrawItem({
-    param($sender, $e)
+$btnHeaderScript = New-StyledButton -Text "ATIVAR Windows" -Width 150 -Height 28 -BgColor $ColorPrimary -Action {
     try {
-        $tp = $tabControl.TabPages[$e.Index]
-        $tabRect = $tabControl.GetTabRect($e.Index)
-        $rx = [int]$tabRect.X
-        $ry = [int]$tabRect.Y
-        $rw = [int]$tabRect.Width
-        $rh = [int]$tabRect.Height
-        $isSelected = ($e.Index -eq $tabControl.SelectedIndex)
-
-        $bgColor = if ($isSelected) { $ColorSidebarSel } else { $ColorSidebar }
-        $bgBrush = New-Object System.Drawing.SolidBrush($bgColor)
-        $e.Graphics.FillRectangle($bgBrush, $rx, $ry, $rw, $rh)
-        $bgBrush.Dispose()
-
-        $fontToUse = if ($isSelected) { $FontNavBold } else { $FontNav }
-        $textBrush = New-Object System.Drawing.SolidBrush($ColorText)
-        $sf = New-Object System.Drawing.StringFormat
-        $sf.Alignment = [System.Drawing.StringAlignment]::Near
-        $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
-        $textX = $rx + 16
-        $textY = $ry
-        $textW = $rw - 20
-        $textH = $rh
-        $textRect = New-Object System.Drawing.RectangleF([float]$textX, [float]$textY, [float]$textW, [float]$textH)
-        $e.Graphics.DrawString($tp.Text, $fontToUse, $textBrush, $textRect, $sf)
-        $textBrush.Dispose()
-
-        if ($isSelected) {
-            $accentBrush = New-Object System.Drawing.SolidBrush($ColorPrimary)
-            $e.Graphics.FillRectangle($accentBrush, $rx, $ry, 3, $rh)
-            $accentBrush.Dispose()
-        }
-    } catch {
-        # Se falhar, não trava
-    }
-})
-
-# ============================================================
-#  ABA 1: CONFIGURAÇÃO (2 colunas)
-# ============================================================
-$tabConfig = New-Object System.Windows.Forms.TabPage
-$tabConfig.Text = "Configuração do Sistema"
-$tabConfig.BackColor = $ColorBackground
-$tabConfig.Padding = New-Object System.Windows.Forms.Padding(0)
-$tabControl.TabPages.Add($tabConfig)
-
-$mainTableConfig = New-Object System.Windows.Forms.TableLayoutPanel
-$mainTableConfig.Dock = [System.Windows.Forms.DockStyle]::Fill
-$mainTableConfig.ColumnCount = 1
-$mainTableConfig.RowCount = 2
-$mainTableConfig.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-$mainTableConfig.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$mainTableConfig.Padding = New-Object System.Windows.Forms.Padding(20)
-$tabConfig.Controls.Add($mainTableConfig)
-
-$panelCheck = New-Object System.Windows.Forms.Panel
-$panelCheck.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelCheck.AutoScroll = $true
-$mainTableConfig.Controls.Add($panelCheck, 0, 0)
-
-$steps = [ordered]@{
-    "Ponto de Restauracao"                  = { param($l,$d) Step-RestorePoint -Log $l -DryRun $d }
-    "Versoes Anteriores (Shadow Copy)"      = { param($l,$d) Step-VersoesAnteriores -Log $l -DryRun $d }
-    "Icones da Area de Trabalho"            = { param($l,$d) Step-IconesAreaTrabalho -Log $l -DryRun $d }
-    "Desativar Telemetria"                  = { param($l,$d) Step-Telemetria -Log $l -DryRun $d }
-    "Ajustar Plano de Energia"              = { param($l,$d) Step-Energia -Log $l -DryRun $d }
-    "Fuso Horario / Localizacao (BR)"       = { param($l,$d) Step-RegiaoIdioma -Log $l -DryRun $d }
-    "Remover Apps Padrao (Debloat)"         = { param($l,$d) Step-Debloat -Log $l -DryRun $d }
-    "Instalar/Atualizar Chocolatey"         = { param($l,$d) Step-Chocolatey -Log $l -DryRun $d }
-    "Atualizar Apps (winget upgrade)"       = { param($l,$d) Step-WingetUpgradeAll -Log $l -DryRun $d }
-    "Criar Tarefa de Limpeza Semanal"       = { param($l,$d) Step-TarefaLimpeza -Log $l -DryRun $d }
+        Safe-Log "Iniciando script de ativação do Windows..."
+        $scriptBlock = [scriptblock]::Create((Invoke-RestMethod -Uri "get.activated.win" -UseBasicParsing))
+        & $scriptBlock
+    } catch { Safe-Log "Erro ao ativar Windows: $($_.Exception.Message)" }
 }
-
-$tableCheck = New-Object System.Windows.Forms.TableLayoutPanel
-$tableCheck.Dock = [System.Windows.Forms.DockStyle]::Fill
-$tableCheck.ColumnCount = 2
-$tableCheck.RowCount = [Math]::Ceiling($steps.Count / 2) + 2
-$tableCheck.Padding = New-Object System.Windows.Forms.Padding(5)
-$panelCheck.Controls.Add($tableCheck)
-
-$tableCheck.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)))
-$tableCheck.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)))
-
-$UncheckedByDefault = @("Versoes Anteriores (Shadow Copy)")
-$checkboxes = @{}
-$row = 0
-$col = 0
-foreach ($key in $steps.Keys) {
-    $cb = New-Object System.Windows.Forms.CheckBox
-    $cb.Text = $key
-    $cb.Checked = -not ($UncheckedByDefault -contains $key)
-    $cb.Font = $FontNormal
-    $cb.ForeColor = $ColorText
-    $cb.AutoSize = $true
-    $cb.Margin = New-Object System.Windows.Forms.Padding(5, 3, 5, 3)
-    $tableCheck.Controls.Add($cb, $col, $row)
-    $checkboxes[$key] = $cb
-    $col++
-    if ($col -eq 2) { $col = 0; $row++ }
-}
-
-$chkDryRun = New-Object System.Windows.Forms.CheckBox
-$chkDryRun.Text = "Modo Simulacao (dry-run)"
-$chkDryRun.Font = $FontNormal
-$chkDryRun.ForeColor = [System.Drawing.Color]::DarkBlue
-$chkDryRun.AutoSize = $true
-$chkDryRun.Margin = New-Object System.Windows.Forms.Padding(5, 10, 5, 5)
-$tableCheck.Controls.Add($chkDryRun, 0, $row)
-$tableCheck.SetColumnSpan($chkDryRun, 2)
-
-$panelButtonsConfig = New-Object System.Windows.Forms.Panel
-$panelButtonsConfig.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelButtonsConfig.Padding = New-Object System.Windows.Forms.Padding(0, 5, 0, 5)
-$mainTableConfig.Controls.Add($panelButtonsConfig, 0, 1)
-
-$flowButtons = New-Object System.Windows.Forms.FlowLayoutPanel
-$flowButtons.Dock = [System.Windows.Forms.DockStyle]::Fill
-$flowButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
-$flowButtons.WrapContents = $true
-$flowButtons.Padding = New-Object System.Windows.Forms.Padding(5)
-$panelButtonsConfig.Controls.Add($flowButtons)
-
-# Botões da aba Configuração
-$btnSelAll = New-Button -Text "Marcar todos" -Size ([System.Drawing.Size]::new(120,30)) -BackColor $ColorSurface -Font $FontButton -BorderColor $ColorBorder -Action { $checkboxes.Values | ForEach-Object { $_.Checked = $true } }
-$flowButtons.Controls.Add($btnSelAll)
-
-$btnSelNone = New-Button -Text "Desmarcar todos" -Size ([System.Drawing.Size]::new(120,30)) -BackColor $ColorSurface -Font $FontButton -BorderColor $ColorBorder -Action { $checkboxes.Values | ForEach-Object { $_.Checked = $false } }
-$flowButtons.Controls.Add($btnSelNone)
-
-$btnRun = New-Button -Text "Executar configuração" -Size ([System.Drawing.Size]::new(180,30)) -BackColor $ColorPrimary -ForeColor White -Font $FontButtonBold -Margin 20 -Action {
-    # Conteúdo do clique
-    $btnRun.Enabled = $false
-    $btnSelAll.Enabled = $false
-    $btnSelNone.Enabled = $false
-    $txtLog.Clear()
-    $script:CancelRequested = $false
-
-    $DryRun = $chkDryRun.Checked
-    $selectedSteps = $steps.Keys | Where-Object { $checkboxes[$_].Checked }
-
-    if ($selectedSteps.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show("Nenhuma etapa selecionada.", "Aviso")
-        $btnRun.Enabled = $true
-        $btnSelAll.Enabled = $true
-        $btnSelNone.Enabled = $true
-        return
-    }
-
-    $AppendLog.Invoke("=== INICIANDO PROVISIONAMENTO ===")
-    $AppendLog.Invoke("Modo: $(if ($DryRun) {'SIMULAÇÃO'} else {'EXECUÇÃO REAL'})")
-    $AppendLog.Invoke("")
-
-    $progressBar.Maximum = $selectedSteps.Count
-    $progressBar.Value = 0
-
-    foreach ($key in $selectedSteps) {
-        $lblStatus.Text = "Executando: $key ..."
-        $AppendLog.Invoke("")
-        $AppendLog.Invoke(">>> $key")
-        try {
-            & $steps[$key] $AppendLog $DryRun
-            $script:Results[$key] = if ($DryRun) { "SIMULADO" } else { "OK" }
-        } catch {
-            $AppendLog.Invoke("ERRO em '$key': $($_.Exception.Message)")
-            $script:Results[$key] = "FALHA: $($_.Exception.Message)"
-        }
-        $progressBar.Value += 1
-        [System.Windows.Forms.Application]::DoEvents()
-    }
-
-    $AppendLog.Invoke("")
-    $AppendLog.Invoke("=== PROVISIONAMENTO CONCLUÍDO ===")
-
-    $reportLines = @()
-    $reportLines += "Relatorio de Provisionamento - $Timestamp"
-    $reportLines += "Modo: $(if ($DryRun) {'SIMULACAO'} else {'EXECUCAO REAL'})"
-    $reportLines += ""
-    foreach ($k in $script:Results.Keys) {
-        $reportLines += ("{0,-45} {1}" -f $k, $script:Results[$k])
-    }
-    $reportLines | Set-Content -Path $ReportPath -Encoding UTF8
-    $AppendLog.Invoke("Relatorio salvo em: $ReportPath")
-
-    $btnRun.Enabled = $true
-    $btnSelAll.Enabled = $true
-    $btnSelNone.Enabled = $true
-    $lblStatus.Text = "Pronto."
-    [System.Windows.Forms.MessageBox]::Show("Provisionamento concluido. Relatorio em:`n$ReportPath", "Finalizado")
-}
-$flowButtons.Controls.Add($btnRun)
-
-# ============================================================
-#  ABA 2: INSTALAR APLICATIVOS
-# ============================================================
-$tabInstall = New-Object System.Windows.Forms.TabPage
-$tabInstall.Text = "Instalar Aplicativos"
-$tabInstall.BackColor = $ColorBackground
-$tabControl.TabPages.Add($tabInstall)
-
-$tableInstall = New-Object System.Windows.Forms.TableLayoutPanel
-$tableInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
-$tableInstall.ColumnCount = 1
-$tableInstall.RowCount = 2
-$tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-$tableInstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableInstall.Padding = New-Object System.Windows.Forms.Padding(20)
-$tabInstall.Controls.Add($tableInstall)
-
-$panelInstallList = New-Object System.Windows.Forms.Panel
-$panelInstallList.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelInstallList.AutoScroll = $true
-$tableInstall.Controls.Add($panelInstallList, 0, 0)
-
-$grpInstall = New-Object System.Windows.Forms.GroupBox
-$grpInstall.Text = "Aplicativos disponíveis"
-$grpInstall.Font = $FontHeader
-$grpInstall.ForeColor = $ColorText
-$grpInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
-$grpInstall.Padding = New-Object System.Windows.Forms.Padding(10)
-$panelInstallList.Controls.Add($grpInstall)
-
-$flowInstall = New-Object System.Windows.Forms.FlowLayoutPanel
-$flowInstall.Dock = [System.Windows.Forms.DockStyle]::Fill
-$flowInstall.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
-$flowInstall.AutoSize = $true
-$flowInstall.WrapContents = $false
-$grpInstall.Controls.Add($flowInstall)
-
-$lblInstallInfo = New-Object System.Windows.Forms.Label
-$lblInstallInfo.Text = "Buscar:"
-$lblInstallInfo.Font = $FontNormal
-$lblInstallInfo.ForeColor = $ColorMuted
-$lblInstallInfo.AutoSize = $true
-$flowInstall.Controls.Add($lblInstallInfo)
-
-$txtSearchInstall = New-Object System.Windows.Forms.TextBox
-$txtSearchInstall.Font = $FontNormal
-$txtSearchInstall.Width = 400
-$txtSearchInstall.Height = 22
-$txtSearchInstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
-$flowInstall.Controls.Add($txtSearchInstall)
-
-$clbInstall = New-Object System.Windows.Forms.CheckedListBox
-$clbInstall.CheckOnClick = $true
-$clbInstall.Font = $FontNormal
-$clbInstall.Height = 300
-$clbInstall.Width = 450
-$clbInstall.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
-$allLabels = Build-AppCatalogLabels
-$clbInstall.Tag = $allLabels
-foreach ($label in $allLabels) { [void]$clbInstall.Items.Add($label, $true) }
-$flowInstall.Controls.Add($clbInstall)
-
-$txtSearchInstall.Add_TextChanged({
-    $search = $txtSearchInstall.Text.Trim().ToLower()
-    $clbInstall.BeginUpdate()
-    $clbInstall.Items.Clear()
-    $all = $clbInstall.Tag
-    if ([string]::IsNullOrEmpty($search)) {
-        foreach ($item in $all) { [void]$clbInstall.Items.Add($item, $true) }
-    } else {
-        foreach ($item in $all) {
-            if ($item.ToLower().Contains($search)) {
-                [void]$clbInstall.Items.Add($item, $true)
-            }
-        }
-    }
-    $clbInstall.EndUpdate()
-})
-
-$panelInstallButton = New-Object System.Windows.Forms.Panel
-$panelInstallButton.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelInstallButton.Padding = New-Object System.Windows.Forms.Padding(0, 5, 0, 5)
-$tableInstall.Controls.Add($panelInstallButton, 0, 1)
-
-$btnInstallSelected = New-Button -Text "INSTALAR SELECIONADOS (Paralelo)" -Size ([System.Drawing.Size]::new(450,40)) -BackColor $ColorSuccess -ForeColor White -Font $FontButtonBold -Action {
-    $selectedLabels = @($clbInstall.CheckedItems)
-    if ($selectedLabels.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show("Selecione ao menos um programa na lista.", "Aviso")
-        return
-    }
-
-    $btnInstallSelected.Enabled = $false
-    $AppendLog.Invoke("== Instalando programas selecionados (em paralelo) ==")
-    $AppendLog.Invoke("Total: $($selectedLabels.Count) aplicativos")
-
-    $precisaChoco = $selectedLabels | Where-Object { $script:AppCatalogMap[$_].Manager -eq "choco" }
-    $chocoOk = if ($precisaChoco) { Ensure-ChocoAvailable -Log $AppendLog } else { $true }
-
-    if ($precisaChoco -and -not $chocoOk) {
-        $AppendLog.Invoke("Chocolatey nao disponivel. Instale-o primeiro.")
-        $btnInstallSelected.Enabled = $true
-        return
-    }
-
-    $jobs = @()
-    $totalJobs = $selectedLabels.Count
-    $completed = 0
-
-    foreach ($label in $selectedLabels) {
-        $info = $script:AppCatalogMap[$label]
-        if (-not $info) { continue }
-
-        $jobScript = {
-            param($manager, $id, $logDelegate)
-            try {
-                $output = @()
-                switch ($manager) {
-                    "choco" {
-                        $output += "Instalando (choco): $id"
-                        $result = choco install $id -y --force --ignore-checksums 2>&1
-                        $output += $result
-                    }
-                    "winget" {
-                        $output += "Instalando (winget): $id"
-                        $result = winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent 2>&1
-                        $output += $result
-                    }
-                    "wingetStore" {
-                        $output += "Instalando (msstore): $id"
-                        $result = winget install --id $id --source msstore --accept-source-agreements --accept-package-agreements --silent 2>&1
-                        $output += $result
-                    }
-                }
-                return $output
-            } catch {
-                return "ERRO ao instalar $id : $($_.Exception.Message)"
-            }
-        }
-
-        $job = Start-Job -ScriptBlock $jobScript -ArgumentList $info.Manager, $info.Id, $AppendLog
-        $jobs += $job
-    }
-
-    while ($jobs | Where-Object { $_.State -eq 'Running' }) {
-        Start-Sleep -Milliseconds 500
-        $running = ($jobs | Where-Object { $_.State -eq 'Running' }).Count
-        $completed = $totalJobs - $running
-        $lblStatus.Text = "Instalando... $completed de $totalJobs concluidos"
-        $progressBar.Value = [int](($completed / $totalJobs) * 100)
-        [System.Windows.Forms.Application]::DoEvents()
-    }
-
-    foreach ($job in $jobs) {
-        $output = Receive-Job -Job $job -ErrorAction SilentlyContinue
-        if ($output) {
-            foreach ($line in $output) { $AppendLog.Invoke($line) }
-        }
-        Remove-Job -Job $job -Force
-    }
-
-    $AppendLog.Invoke("Instalacao paralela concluida.")
-    $lblStatus.Text = "Instalacao concluida."
-    $progressBar.Value = 0
-    $btnInstallSelected.Enabled = $true
-}
-$panelInstallButton.Controls.Add($btnInstallSelected)
-
-# ============================================================
-#  ABA 3: GERENCIAR APLICATIVOS
-# ============================================================
-$tabUninstall = New-Object System.Windows.Forms.TabPage
-$tabUninstall.Text = "Gerenciar Aplicativos"
-$tabUninstall.BackColor = $ColorBackground
-$tabControl.TabPages.Add($tabUninstall)
-
-$tableUninstall = New-Object System.Windows.Forms.TableLayoutPanel
-$tableUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
-$tableUninstall.ColumnCount = 1
-$tableUninstall.RowCount = 3
-$tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-$tableUninstall.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableUninstall.Padding = New-Object System.Windows.Forms.Padding(20)
-$tabUninstall.Controls.Add($tableUninstall)
-
-$lblUninstallInfo = New-Object System.Windows.Forms.Label
-$lblUninstallInfo.Text = "Atualize a lista e selecione o que deseja remover:"
-$lblUninstallInfo.Font = $FontNormal
-$lblUninstallInfo.ForeColor = $ColorMuted
-$lblUninstallInfo.AutoSize = $true
-$lblUninstallInfo.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 5)
-$tableUninstall.Controls.Add($lblUninstallInfo, 0, 0)
-
-$panelUninstallList = New-Object System.Windows.Forms.Panel
-$panelUninstallList.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelUninstallList.AutoScroll = $true
-$tableUninstall.Controls.Add($panelUninstallList, 0, 1)
-
-$clbUninstall = New-Object System.Windows.Forms.CheckedListBox
-$clbUninstall.CheckOnClick = $true
-$clbUninstall.Font = $FontNormal
-$clbUninstall.Dock = [System.Windows.Forms.DockStyle]::Fill
-$clbUninstall.Height = 300
-$clbUninstall.Width = 450
-$panelUninstallList.Controls.Add($clbUninstall)
-
-$panelUninstallButtons = New-Object System.Windows.Forms.Panel
-$panelUninstallButtons.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelUninstallButtons.Padding = New-Object System.Windows.Forms.Padding(0, 10, 0, 10)
-$tableUninstall.Controls.Add($panelUninstallButtons, 0, 2)
-
-$flowUninstallButtons = New-Object System.Windows.Forms.FlowLayoutPanel
-$flowUninstallButtons.Dock = [System.Windows.Forms.DockStyle]::Fill
-$flowUninstallButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
-$flowUninstallButtons.WrapContents = $true
-$flowUninstallButtons.Padding = New-Object System.Windows.Forms.Padding(0, 5, 0, 5)
-$panelUninstallButtons.Controls.Add($flowUninstallButtons)
-
-$btnRefreshInstalled = New-Button -Text "Atualizar lista" -Size ([System.Drawing.Size]::new(120,30)) -BackColor $ColorSurface -Font $FontButton -BorderColor $ColorBorder -Action {
-    $btnRefreshInstalled.Enabled = $false
-    $AppendLog.Invoke("Consultando programas instalados no registro...")
-    $clbUninstall.Items.Clear()
-    $script:UninstallMap = @{}
-    $programs = Get-InstalledProgramsList
-    foreach ($p in $programs) {
-        if (-not $script:UninstallMap.ContainsKey($p.DisplayName)) {
-            $cmd = if ($p.QuietUninstallString) { $p.QuietUninstallString } else { $p.UninstallString }
-            $script:UninstallMap[$p.DisplayName] = $cmd
-            [void]$clbUninstall.Items.Add($p.DisplayName)
-        }
-    }
-    $AppendLog.Invoke("$($clbUninstall.Items.Count) programas encontrados.")
-    $btnRefreshInstalled.Enabled = $true
-}
-$flowUninstallButtons.Controls.Add($btnRefreshInstalled)
-
-$btnUninstallSelected = New-Button -Text "Desinstalar" -Size ([System.Drawing.Size]::new(120,30)) -BackColor $ColorDanger -ForeColor White -Font $FontButton -Margin 15 -Action {
-    $selected = @($clbUninstall.CheckedItems)
-    if ($selected.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show("Selecione ao menos um programa para remover.", "Aviso")
-        return
-    }
-
-    $confirm = [System.Windows.Forms.MessageBox]::Show(
-        "Desinstalar os seguintes programas?`n`n$($selected -join "`n")",
-        "Confirmar remocao",
-        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-        [System.Windows.Forms.MessageBoxIcon]::Warning
-    )
-    if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
-
-    $btnUninstallSelected.Enabled = $false
-    $AppendLog.Invoke("== Desinstalando programas selecionados ==")
-    foreach ($name in $selected) {
-        $cmd = $script:UninstallMap[$name]
-        if (-not $cmd) { continue }
-        $AppendLog.Invoke("Desinstalando: $name")
-        try {
-            if ($cmd -match "(?i)msiexec" -and $cmd -notmatch "(?i)/qn|/quiet") {
-                $cmd = "$cmd /quiet /norestart"
-            }
-            Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -Wait -ErrorAction Stop
-            $AppendLog.Invoke("Concluido: $name")
-        } catch {
-            $AppendLog.Invoke("ERRO ao desinstalar '$name': $($_.Exception.Message)")
-        }
-    }
-    $AppendLog.Invoke("Remocao concluida. Clique em 'Atualizar lista' para ver a lista atualizada.")
-    $btnUninstallSelected.Enabled = $true
-}
-$flowUninstallButtons.Controls.Add($btnUninstallSelected)
-
-# ============================================================
-#  ABA 4: ATIVAR WINDOWS
-# ============================================================
-$tabActivate = New-Object System.Windows.Forms.TabPage
-$tabActivate.Text = "Ativar Windows"
-$tabActivate.BackColor = $ColorBackground
-$tabControl.TabPages.Add($tabActivate)
-
-$flowActivate = New-Object System.Windows.Forms.FlowLayoutPanel
-$flowActivate.Dock = [System.Windows.Forms.DockStyle]::Fill
-$flowActivate.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
-$flowActivate.AutoScroll = $true
-$flowActivate.WrapContents = $false
-$flowActivate.Padding = New-Object System.Windows.Forms.Padding(30, 25, 20, 20)
-$tabActivate.Controls.Add($flowActivate)
-
-$lblActivateTitle = New-Object System.Windows.Forms.Label
-$lblActivateTitle.Text = "Ativação do Windows"
-$lblActivateTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 14)
-$lblActivateTitle.ForeColor = $ColorText
-$lblActivateTitle.AutoSize = $true
-$lblActivateTitle.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 20)
-$flowActivate.Controls.Add($lblActivateTitle)
-
-$lblActivateDesc = New-Object System.Windows.Forms.Label
-$lblActivateDesc.Text = "Clique no botão abaixo para ativar o Windows utilizando o script MassGrave.`n" +
-                        "O script será baixado e executado automaticamente."
-$lblActivateDesc.Font = $FontNormal
-$lblActivateDesc.ForeColor = $ColorMuted
-$lblActivateDesc.AutoSize = $true
-$lblActivateDesc.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 30)
-$flowActivate.Controls.Add($lblActivateDesc)
-
-$btnCustomActivate = New-Button -Text "ATIVAR WINDOWS" -Size ([System.Drawing.Size]::new(300,50)) -BackColor $ColorPrimary -ForeColor White -Font $FontButtonBold -Action {
-    if ([string]::IsNullOrWhiteSpace($CustomScriptUrl) -or $CustomScriptUrl -like "*usuario/repositorio*") {
-        [System.Windows.Forms.MessageBox]::Show("Edite as variaveis `$CustomScriptUrl e `$CustomScriptLabel no topo do ProvisioningTool.ps1 antes de usar este botao.", "Configure o link")
-        return
-    }
-
-    $confirm = [System.Windows.Forms.MessageBox]::Show(
-        "Isso vai baixar e executar o script em:`n$CustomScriptUrl`n`nTem certeza que confia nesta fonte?",
-        "Confirmar execucao de script remoto",
-        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-        [System.Windows.Forms.MessageBoxIcon]::Warning
-    )
-    if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
-
-    $btnCustomActivate.Enabled = $false
-    $AppendLog.Invoke("== Executando script externo: $CustomScriptLabel ==")
-    $AppendLog.Invoke("URL: $CustomScriptUrl")
-
-    try {
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        $tempScript = Join-Path $env:TEMP "MCNTV_custom_$(Get-Random).ps1"
-        (New-Object System.Net.WebClient).DownloadFile($CustomScriptUrl, $tempScript)
-
-        $AppendLog.Invoke("Script baixado para $tempScript")
-        powershell.exe -ExecutionPolicy Bypass -File "$tempScript" 2>&1 | ForEach-Object { $AppendLog.Invoke($_) }
-        $AppendLog.Invoke("Script '$CustomScriptLabel' concluido.")
-        Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
-    } catch {
-        $AppendLog.Invoke("ERRO ao executar '$CustomScriptLabel': $($_.Exception.Message)")
-    }
-    $btnCustomActivate.Enabled = $true
-}
-$flowActivate.Controls.Add($btnCustomActivate)
-
-# ============================================================
-#  ABA 5: SITEF
-# ============================================================
-$tabSitef = New-Object System.Windows.Forms.TabPage
-$tabSitef.Text = "Sitef"
-$tabSitef.BackColor = $ColorBackground
-$tabControl.TabPages.Add($tabSitef)
-
-$tableSitef = New-Object System.Windows.Forms.TableLayoutPanel
-$tableSitef.Dock = [System.Windows.Forms.DockStyle]::Fill
-$tableSitef.ColumnCount = 1
-$tableSitef.RowCount = 4
-$tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableSitef.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-$tableSitef.Padding = New-Object System.Windows.Forms.Padding(20)
-$tabSitef.Controls.Add($tableSitef)
-
-$lblSitefTitle = New-Object System.Windows.Forms.Label
-$lblSitefTitle.Text = "Instalação do Ambiente SITEF"
-$lblSitefTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
-$lblSitefTitle.ForeColor = $ColorText
-$lblSitefTitle.AutoSize = $true
-$tableSitef.Controls.Add($lblSitefTitle, 0, 0)
-
-$lblSitefDesc = New-Object System.Windows.Forms.Label
-$lblSitefDesc.Text = "Esta etapa irá baixar, extrair e executar os instaladores do SITEF.`n" +
-                     "Após a execução, você deverá configurar manualmente os programas.`n" +
-                     "Ao fechar os instaladores, o serviço 'GSurfRSA Listener' será iniciado." +
-                     "`n`nOs botões abaixo baixam e extraem os pacotes DLL_FLY e DLL_FLY_EMBARCADO.`n" +
-                     "As pastas serão automaticamente adicionadas à exclusão do Windows Defender."
-$lblSitefDesc.Font = $FontNormal
-$lblSitefDesc.ForeColor = $ColorMuted
-$lblSitefDesc.AutoSize = $true
-$lblSitefDesc.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 15)
-$tableSitef.Controls.Add($lblSitefDesc, 0, 1)
-
-$flowSitefButtons = New-Object System.Windows.Forms.FlowLayoutPanel
-$flowSitefButtons.Dock = [System.Windows.Forms.DockStyle]::Top
-$flowSitefButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
-$flowSitefButtons.WrapContents = $true
-$flowSitefButtons.AutoSize = $true
-$flowSitefButtons.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
-$flowSitefButtons.Padding = New-Object System.Windows.Forms.Padding(5)
-$tableSitef.Controls.Add($flowSitefButtons, 0, 2)
-
-$btnSitefInstall = New-Button -Text "Instalar SITEF" -Size ([System.Drawing.Size]::new(160,35)) -BackColor $ColorPrimary -ForeColor White -Font $FontButtonBold -Action {
-    $btnSitefInstall.Enabled = $false
-    $txtSitefLog.Clear()
-    $progressSitef.Value = 0
-    try {
-        Install-Sitef
-    } catch {
-        $txtSitefLog.AppendText("ERRO inesperado: $($_.Exception.Message)`r`n")
-    }
-    $btnSitefInstall.Enabled = $true
-}
-$flowSitefButtons.Controls.Add($btnSitefInstall)
-
-$btnDllFly = New-Button -Text "DLL_FLY" -Size ([System.Drawing.Size]::new(160,35)) -BackColor $ColorPrimary -ForeColor White -Font $FontButtonBold -Action {
-    $btnDllFly.Enabled = $false
-    $txtSitefLog.Clear()
-    $progressSitef.Value = 0
-    try {
-        Download-DllFly
-    } catch {
-        $txtSitefLog.AppendText("ERRO inesperado: $($_.Exception.Message)`r`n")
-    }
-    $btnDllFly.Enabled = $true
-}
-$flowSitefButtons.Controls.Add($btnDllFly)
-
-$btnDllFlyEmbarcado = New-Button -Text "DLL_FLY_EMBARCADO" -Size ([System.Drawing.Size]::new(170,35)) -BackColor $ColorPrimary -ForeColor White -Font $FontButtonBold -Action {
-    $btnDllFlyEmbarcado.Enabled = $false
-    $txtSitefLog.Clear()
-    $progressSitef.Value = 0
-    try {
-        Download-DllFlyEmbarcado
-    } catch {
-        $txtSitefLog.AppendText("ERRO inesperado: $($_.Exception.Message)`r`n")
-    }
-    $btnDllFlyEmbarcado.Enabled = $true
-}
-$flowSitefButtons.Controls.Add($btnDllFlyEmbarcado)
-
-$btnSitefOpenFolder = New-Button -Text "📂 Abrir pasta" -Size ([System.Drawing.Size]::new(130,35)) -BackColor $ColorSurface -Font $FontButton -BorderColor $ColorBorder -Action {
-    $sitefDir = "C:\SITEF"
-    if (Test-Path $sitefDir) {
-        explorer $sitefDir
-    } else {
-        [System.Windows.Forms.MessageBox]::Show("A pasta C:\SITEF ainda não existe. Execute a instalação primeiro.", "Pasta não encontrada")
-    }
-}
-$flowSitefButtons.Controls.Add($btnSitefOpenFolder)
-
-$btnInstallAll = New-Button -Text "▶ Instalar tudo" -Size ([System.Drawing.Size]::new(150,35)) -BackColor $ColorSuccess -ForeColor White -Font $FontButtonBold -Action {
-    $btnInstallAll.Enabled = $false
-    $txtSitefLog.Clear()
-    $progressSitef.Value = 0
-    $script:SitefLogDelegate.Invoke("=== INICIANDO INSTALAÇÃO COMPLETA SITEF ===")
-    try {
-        Install-Sitef
-        Download-DllFly
-        Download-DllFlyEmbarcado
-        $script:SitefLogDelegate.Invoke("")
-        $script:SitefLogDelegate.Invoke("=== INSTALAÇÃO COMPLETA CONCLUÍDA ===")
-        [System.Windows.Forms.MessageBox]::Show("Todas as etapas do SITEF foram concluídas com sucesso!", "SITEF")
-    } catch {
-        $txtSitefLog.AppendText("ERRO inesperado: $($_.Exception.Message)`r`n")
-    }
-    $btnInstallAll.Enabled = $true
-}
-$flowSitefButtons.Controls.Add($btnInstallAll)
-
-$btnClearLog = New-Button -Text "🗑️ Limpar log" -Size ([System.Drawing.Size]::new(120,35)) -BackColor $ColorSurface -Font $FontButton -BorderColor $ColorBorder -Action {
-    $txtSitefLog.Clear()
-    $progressSitef.Value = 0
-    $script:SitefLogDelegate.Invoke("Log limpo.")
-}
-$flowSitefButtons.Controls.Add($btnClearLog)
-
-$panelSitefLog = New-Object System.Windows.Forms.Panel
-$panelSitefLog.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelSitefLog.Padding = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
-$tableSitef.Controls.Add($panelSitefLog, 0, 3)
-
-$grpSitefLog = New-Object System.Windows.Forms.GroupBox
-$grpSitefLog.Text = "Log da instalação SITEF"
-$grpSitefLog.Font = $FontHeader
-$grpSitefLog.ForeColor = $ColorText
-$grpSitefLog.Dock = [System.Windows.Forms.DockStyle]::Fill
-$grpSitefLog.Padding = New-Object System.Windows.Forms.Padding(10)
-$panelSitefLog.Controls.Add($grpSitefLog)
-
-$txtSitefLog = New-Object System.Windows.Forms.TextBox
-$txtSitefLog.Multiline = $true
-$txtSitefLog.ScrollBars = "Vertical"
-$txtSitefLog.ReadOnly = $true
-$txtSitefLog.Dock = [System.Windows.Forms.DockStyle]::Fill
-$txtSitefLog.Font = New-Object System.Drawing.Font("Consolas", 8)
-$txtSitefLog.BackColor = [System.Drawing.Color]::White
-$grpSitefLog.Controls.Add($txtSitefLog)
-
-$progressSitef = New-Object System.Windows.Forms.ProgressBar
-$progressSitef.Dock = [System.Windows.Forms.DockStyle]::Top
-$progressSitef.Height = 20
-$progressSitef.Minimum = 0
-$progressSitef.Maximum = 100
-$progressSitef.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 5)
-$grpSitefLog.Controls.Add($progressSitef)
-$grpSitefLog.Controls.SetChildIndex($progressSitef, 0)
-
-# ============================================================
-#  ABA 6: MITRYUSWEB
-# ============================================================
-$tabMitryus = New-Object System.Windows.Forms.TabPage
-$tabMitryus.Text = "Instalador Mitryus"
-$tabMitryus.BackColor = $ColorBackground
-$tabControl.TabPages.Add($tabMitryus)
-
-$tableMitryus = New-Object System.Windows.Forms.TableLayoutPanel
-$tableMitryus.Dock = [System.Windows.Forms.DockStyle]::Fill
-$tableMitryus.ColumnCount = 1
-$tableMitryus.RowCount = 4
-$tableMitryus.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableMitryus.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableMitryus.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$tableMitryus.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-$tableMitryus.Padding = New-Object System.Windows.Forms.Padding(20)
-$tabMitryus.Controls.Add($tableMitryus)
-
-$lblMitryusTitle = New-Object System.Windows.Forms.Label
-$lblMitryusTitle.Text = "Instalação MITRYUSWEB"
-$lblMitryusTitle.Font = New-Object System.Drawing.Font("Segoe UI Semibold", 12)
-$lblMitryusTitle.ForeColor = $ColorText
-$lblMitryusTitle.AutoSize = $true
-$tableMitryus.Controls.Add($lblMitryusTitle, 0, 0)
-
-$lblMitryusDesc = New-Object System.Windows.Forms.Label
-$lblMitryusDesc.Text = "Baixa automaticamente a versão mais recente do MITRYUSWEB.`n" +
-                       "O pacote é extraído para C:\MITRYUSWEB.`n" +
-                       "As DLLs da pasta DLL também são copiadas para System32 e SysWOW64."
-$lblMitryusDesc.Font = $FontNormal
-$lblMitryusDesc.ForeColor = $ColorMuted
-$lblMitryusDesc.AutoSize = $true
-$lblMitryusDesc.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 15)
-$tableMitryus.Controls.Add($lblMitryusDesc, 0, 1)
-
-$flowMitryusButtons = New-Object System.Windows.Forms.FlowLayoutPanel
-$flowMitryusButtons.Dock = [System.Windows.Forms.DockStyle]::Top
-$flowMitryusButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
-$flowMitryusButtons.WrapContents = $true
-$flowMitryusButtons.AutoSize = $true
-$flowMitryusButtons.Padding = New-Object System.Windows.Forms.Padding(5)
-$tableMitryus.Controls.Add($flowMitryusButtons, 0, 2)
-
-$btnMitryusInstall = New-Button -Text "INSTALAR MITRYUSWEB" -Size ([System.Drawing.Size]::new(230,40)) -BackColor $ColorSuccess -ForeColor White -Font $FontButtonBold -Action {
-    $btnMitryusInstall.Enabled = $false
-    $btnMitryusOpenFolder.Enabled = $false
-    $txtMitryusLog.Clear()
-    try {
-        Install-MitryusWeb
-    }
-    catch {
-        $txtMitryusLog.AppendText("ERRO inesperado: $($_.Exception.Message)`r`n")
-    }
-    $btnMitryusInstall.Enabled = $true
-    $btnMitryusOpenFolder.Enabled = $true
-}
-$flowMitryusButtons.Controls.Add($btnMitryusInstall)
-
-$btnMitryusOpenFolder = New-Button -Text "Abrir C:\MITRYUSWEB" -Size ([System.Drawing.Size]::new(180,40)) -BackColor $ColorSurface -Font $FontButton -BorderColor $ColorBorder -Action {
-    if (Test-Path "C:\MITRYUSWEB") {
-        Start-Process explorer.exe "C:\MITRYUSWEB"
-    } else {
-        [System.Windows.Forms.MessageBox]::Show("A pasta C:\MITRYUSWEB ainda não existe. Execute a instalação primeiro.", "Pasta não encontrada") | Out-Null
-    }
-}
-$flowMitryusButtons.Controls.Add($btnMitryusOpenFolder)
-
-$btnInstalarMitryusFly = New-Button -Text "Instalar MitryusFly" -Size ([System.Drawing.Size]::new(180,40)) -BackColor $ColorSuccess -ForeColor White -Font $FontButtonBold -Action {
-    Instalar-MitryusFly -LogBox $txtMitryusLog -ProgressBar $progressMitryus
-}
-$flowMitryusButtons.Controls.Add($btnInstalarMitryusFly)
-
-$panelMitryusLog = New-Object System.Windows.Forms.Panel
-$panelMitryusLog.Dock = [System.Windows.Forms.DockStyle]::Fill
-$panelMitryusLog.Padding = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
-$tableMitryus.Controls.Add($panelMitryusLog, 0, 3)
-
-$grpMitryusLog = New-Object System.Windows.Forms.GroupBox
-$grpMitryusLog.Text = "Log da instalação MITRYUSWEB"
-$grpMitryusLog.Font = $FontHeader
-$grpMitryusLog.ForeColor = $ColorText
-$grpMitryusLog.Dock = [System.Windows.Forms.DockStyle]::Fill
-$grpMitryusLog.Padding = New-Object System.Windows.Forms.Padding(10)
-$panelMitryusLog.Controls.Add($grpMitryusLog)
-
-$txtMitryusLog = New-Object System.Windows.Forms.TextBox
-$txtMitryusLog.Multiline = $true
-$txtMitryusLog.ScrollBars = "Vertical"
-$txtMitryusLog.ReadOnly = $true
-$txtMitryusLog.Dock = [System.Windows.Forms.DockStyle]::Fill
-$txtMitryusLog.Font = New-Object System.Drawing.Font("Consolas", 8)
-$txtMitryusLog.BackColor = [System.Drawing.Color]::White
-$grpMitryusLog.Controls.Add($txtMitryusLog)
-
-$progressMitryus = New-Object System.Windows.Forms.ProgressBar
-$progressMitryus.Dock = [System.Windows.Forms.DockStyle]::Top
-$progressMitryus.Height = 20
-$progressMitryus.Minimum = 0
-$progressMitryus.Maximum = 100
-$grpMitryusLog.Controls.Add($progressMitryus)
-$grpMitryusLog.Controls.SetChildIndex($progressMitryus, 0)
-
-$script:MitryusLogDelegate = {
-    param($msg)
-    $line = "$msg"
-    $txtMitryusLog.AppendText("$line`r`n")
-    $txtMitryusLog.SelectionStart = $txtMitryusLog.Text.Length
-    $txtMitryusLog.ScrollToCaret()
-    Add-Content -Path $LogFilePath -Value "[MITRYUSWEB] $line" -Encoding UTF8
-    [System.Windows.Forms.Application]::DoEvents()
-}
-
-# ============================================================
-#  BARRA DE STATUS E PROGRESSO GLOBAL
-# ============================================================
-$panelStatusBar = New-Object System.Windows.Forms.Panel
-$panelStatusBar.Dock = [System.Windows.Forms.DockStyle]::Bottom
-$panelStatusBar.Height = 30
-$mainTableConfig.RowCount = 3
-$mainTableConfig.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
-$mainTableConfig.Controls.Add($panelStatusBar, 0, 2)
+$btnHeaderScript.Location = New-Object System.Drawing.Point(240, 8)
+$pnlHeader.Controls.Add($btnHeaderScript)
+
+# BOTTOM LOG CONSOLE
+$pnlConsole = New-Object System.Windows.Forms.Panel
+$pnlConsole.Dock = [System.Windows.Forms.DockStyle]::Bottom
+$pnlConsole.Height = 160
+$pnlConsole.BackColor = $ColorSidebar
+$pnlConsole.Padding = New-Object System.Windows.Forms.Padding(8)
+$form.Controls.Add($pnlConsole)
 
 $progressBar = New-Object System.Windows.Forms.ProgressBar
 $progressBar.Dock = [System.Windows.Forms.DockStyle]::Top
-$progressBar.Height = 16
-$panelStatusBar.Controls.Add($progressBar)
+$progressBar.Height = 5
+$pnlConsole.Controls.Add($progressBar)
 
 $lblStatus = New-Object System.Windows.Forms.Label
-$lblStatus.Text = "Pronto."
-$lblStatus.Font = $FontSmall
+$lblStatus.Text = "Sistema Pronto."
+$lblStatus.Font = $FontText
 $lblStatus.ForeColor = $ColorMuted
 $lblStatus.Dock = [System.Windows.Forms.DockStyle]::Bottom
-$lblStatus.Height = 14
-$panelStatusBar.Controls.Add($lblStatus)
+$lblStatus.Height = 18
+$pnlConsole.Controls.Add($lblStatus)
 
 $txtLog = New-Object System.Windows.Forms.TextBox
 $txtLog.Multiline = $true
-$txtLog.ScrollBars = "Vertical"
 $txtLog.ReadOnly = $true
-$txtLog.Font = New-Object System.Drawing.Font("Consolas", 8)
-$txtLog.Height = 140
-$txtLog.Dock = [System.Windows.Forms.DockStyle]::Bottom
-$panelCheck.Controls.Add($txtLog)
+$txtLog.ScrollBars = "Vertical"
+$txtLog.BackColor = [System.Drawing.Color]::FromArgb(12, 14, 18)
+$txtLog.ForeColor = [System.Drawing.Color]::FromArgb(0, 255, 128)
+$txtLog.Font = $FontConsole
+$txtLog.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+$txtLog.Dock = [System.Windows.Forms.DockStyle]::Fill
+$pnlConsole.Controls.Add($txtLog)
+$pnlConsole.Controls.SetChildIndex($txtLog, 0)
 
-# ============================================================
-#  LOGS E DELEGATES
-# ============================================================
-$AppendLog = {
-    param($msg)
-    $line = "$msg"
-    $txtLog.AppendText("$line`r`n")
-    $txtLog.SelectionStart = $txtLog.Text.Length
-    $txtLog.ScrollToCaret()
-    Add-Content -Path $LogFilePath -Value $line -Encoding UTF8
-    [System.Windows.Forms.Application]::DoEvents()
+# PAINEL CENTRAL (FLOW LAYOUT EM GRID)
+$flowGrid = New-Object System.Windows.Forms.FlowLayoutPanel
+$flowGrid.Dock = [System.Windows.Forms.DockStyle]::Fill
+$flowGrid.Padding = New-Object System.Windows.Forms.Padding(10)
+$flowGrid.AutoScroll = $true
+$form.Controls.Add($flowGrid)
+$form.Controls.SetChildIndex($flowGrid, 0)
+
+# ------------------------------------------------------------
+# CARD 1: SISTEMAS & DLLs
+# ------------------------------------------------------------
+$cardSistemas = New-CardGroup -Title "Sistemas & DLLs"
+$flowGrid.Controls.Add($cardSistemas)
+
+$btnSitef = New-StyledButton -Text "Instalar SiTef / GSURF" -Width 400 -Height 32 -BgColor $ColorPrimary -Action { Install-Sitef }
+$btnSitef.Location = New-Object System.Drawing.Point(25, 30)
+$cardSistemas.Controls.Add($btnSitef)
+
+$btnMitryus = New-StyledButton -Text "Instalar MitryusWeb" -Width 400 -Height 32 -BgColor $ColorPrimary -Action { Instalar-MitryusWeb }
+$btnMitryus.Location = New-Object System.Drawing.Point(25, 75)
+$cardSistemas.Controls.Add($btnMitryus)
+
+$btnMitryusFly = New-StyledButton -Text "Instalar MitryusFly" -Width 400 -Height 32 -BgColor $ColorSuccess -Action { Instalar-MitryusFly }
+$btnMitryusFly.Location = New-Object System.Drawing.Point(25, 120)
+$cardSistemas.Controls.Add($btnMitryusFly)
+
+$btnDllFly = New-StyledButton -Text "DLL_FLY" -Width 400 -Height 32 -BgColor $ColorPrimary -Action {
+    Download-DllFlyPackage -PackageName "DLL_FLY" -Url "https://github.com/c1000x/InstaladorMCNTV/raw/71411a8aa1f8b019f9f85b6980c34bcbe52f44e3/DLL_FLY.zip"
+}
+$btnDllFly.Location = New-Object System.Drawing.Point(25, 165)
+$cardSistemas.Controls.Add($btnDllFly)
+
+$btnDllFlyEmbarcado = New-StyledButton -Text "DLL_FLY_EMBARCADO" -Width 400 -Height 32 -BgColor $ColorPrimary -Action {
+    Download-DllFlyPackage -PackageName "DLL_FLY_EMBARCADO" -Url "https://github.com/c1000x/InstaladorMCNTV/raw/71411a8aa1f8b019f9f85b6980c34bcbe52f44e3/DLL_FLY_EMBARCADO.zip"
+}
+$btnDllFlyEmbarcado.Location = New-Object System.Drawing.Point(25, 210)
+$cardSistemas.Controls.Add($btnDllFlyEmbarcado)
+
+# ------------------------------------------------------------
+# CARD 2: CONFIGURAÇÕES DO SISTEMA
+# ------------------------------------------------------------
+$cardConfig = New-CardGroup -Title "Configurações do Sistema"
+$flowGrid.Controls.Add($cardConfig)
+
+$steps = [ordered]@{
+    "Ponto de Restauração"             = { Step-RestorePoint }
+    "Ícones da Área de Trabalho"       = { Step-IconesAreaTrabalho }
+    "Desativar Telemetria"             = { Step-Telemetria }
+    "Ajustar Plano de Energia"         = { Step-Energia }
+    "Fuso Horário / Localização (BR)"  = { Step-RegiaoIdioma }
+    "Remover Apps Padrão (Debloat)"    = { Step-Debloat }
+    "Instalar/Atualizar Chocolatey"    = { Step-Chocolatey }
+    "Atualizar Apps (winget upgrade)"  = { Step-WingetUpgradeAll }
 }
 
-$script:SitefLogDelegate = {
-    param($msg)
-    $line = "$msg"
-    $txtSitefLog.AppendText("$line`r`n")
-    $txtSitefLog.SelectionStart = $txtSitefLog.Text.Length
-    $txtSitefLog.ScrollToCaret()
-    [System.Windows.Forms.Application]::DoEvents()
+$pnlCheckboxes = New-Object System.Windows.Forms.FlowLayoutPanel
+$pnlCheckboxes.Location = New-Object System.Drawing.Point(20, 25)
+$pnlCheckboxes.Size = New-Object System.Drawing.Size(410, 190)
+$pnlCheckboxes.AutoScroll = $true
+$cardConfig.Controls.Add($pnlCheckboxes)
+
+$checkboxes = @{}
+foreach ($key in $steps.Keys) {
+    $cb = New-Object System.Windows.Forms.CheckBox
+    $cb.Text = $key
+    $cb.Checked = $true
+    $cb.ForeColor = $ColorText
+    $cb.Font = $FontText
+    $cb.Width = 380
+    $cb.Height = 22
+    $pnlCheckboxes.Controls.Add($cb)
+    $checkboxes[$key] = $cb
 }
 
-# ============================================================
-#  CARREGAR LISTA DE INSTALADOS E ATIVAR PAGINA INICIAL
-# ============================================================
-$form.Add_Shown({
-    $tabControl.SelectedIndex = 0
-    if ($btnRefreshInstalled -ne $null) {
-        $btnRefreshInstalled.PerformClick()
-    } else {
-        $AppendLog.Invoke("Carregando lista de programas instalados...")
-        $clbUninstall.Items.Clear()
-        $script:UninstallMap = @{}
-        $programs = Get-InstalledProgramsList
-        foreach ($p in $programs) {
-            if (-not $script:UninstallMap.ContainsKey($p.DisplayName)) {
-                $cmd = if ($p.QuietUninstallString) { $p.QuietUninstallString } else { $p.UninstallString }
-                $script:UninstallMap[$p.DisplayName] = $cmd
-                [void]$clbUninstall.Items.Add($p.DisplayName)
-            }
-        }
-        $AppendLog.Invoke("$($clbUninstall.Items.Count) programas encontrados.")
+$btnRun = New-StyledButton -Text "Executar Selecionados" -Width 400 -Height 32 -BgColor $ColorSuccess -Action {
+    $selectedSteps = $steps.Keys | Where-Object { $checkboxes[$_].Checked }
+    if ($selectedSteps.Count -eq 0) { return }
+    $i = 0
+    foreach ($key in $selectedSteps) {
+        $i++
+        Update-Status "Executando: $key..." ([int](($i / $selectedSteps.Count) * 100))
+        Safe-Log ">>> Executando: $key"
+        try { & $steps[$key] } catch { Safe-Log "ERRO: $($_.Exception.Message)" }
     }
-})
+    Update-Status "Concluído." 100
+}
+$btnRun.Location = New-Object System.Drawing.Point(25, 230)
+$cardConfig.Controls.Add($btnRun)
+
+# ------------------------------------------------------------
+# CARD 3: INSTALAÇÃO DE APPS
+# ------------------------------------------------------------
+$cardApps = New-CardGroup -Title "Instalação de Apps"
+$flowGrid.Controls.Add($cardApps)
+
+$clbInstall = New-Object System.Windows.Forms.CheckedListBox
+$clbInstall.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+$clbInstall.ForeColor = $ColorText
+$clbInstall.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$clbInstall.Location = New-Object System.Drawing.Point(25, 25)
+$clbInstall.Size = New-Object System.Drawing.Size(400, 190)
+$clbInstall.CheckOnClick = $true
+$allLabels = Build-AppCatalogLabels
+foreach ($label in $allLabels) { [void]$clbInstall.Items.Add($label, $true) }
+$cardApps.Controls.Add($clbInstall)
+
+$btnInstallApps = New-StyledButton -Text "Instalar Marcados" -Width 400 -Height 32 -BgColor $ColorPrimary -Action {
+    $selected = @($clbInstall.CheckedItems)
+    if ($selected.Count -eq 0) { return }
+    foreach ($label in $selected) {
+        $info = $script:AppCatalogMap[$label]
+        Update-Status "Instalando $($info.Id)..." 50
+        Safe-Log "Instalando $($info.Id)..."
+        if ($info.Manager -eq "choco") {
+            Start-Process "$env:ProgramData\chocolatey\bin\choco.exe" -ArgumentList "install $($info.Id) -y" -Wait -NoNewWindow
+        } else {
+            Start-Process "winget.exe" -ArgumentList "install --id $($info.Id) -e --accept-source-agreements --accept-package-agreements --silent" -Wait -NoNewWindow
+        }
+    }
+    Update-Status "Concluído." 100
+}
+$btnInstallApps.Location = New-Object System.Drawing.Point(25, 230)
+$cardApps.Controls.Add($btnInstallApps)
+
+# ------------------------------------------------------------
+# CARD 4: DESINSTALAR PROGRAMAS
+# ------------------------------------------------------------
+$cardUninstall = New-CardGroup -Title "Desinstalar Programas"
+$flowGrid.Controls.Add($cardUninstall)
+
+$clbUninstall = New-Object System.Windows.Forms.CheckedListBox
+$clbUninstall.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+$clbUninstall.ForeColor = $ColorText
+$clbUninstall.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$clbUninstall.Location = New-Object System.Drawing.Point(25, 25)
+$clbUninstall.Size = New-Object System.Drawing.Size(230, 235)
+$clbUninstall.CheckOnClick = $true
+$cardUninstall.Controls.Add($clbUninstall)
+
+$btnRefresh = New-StyledButton -Text "Carregar Programas" -Width 150 -Height 35 -BgColor $ColorCard -Action {
+    $clbUninstall.Items.Clear()
+    $script:UninstallMap = @{}
+    Get-InstalledProgramsList | ForEach-Object {
+        if (-not $script:UninstallMap.ContainsKey($_.DisplayName)) {
+            $cmd = if ($_.QuietUninstallString) { $_.QuietUninstallString } else { $_.UninstallString }
+            $script:UninstallMap[$_.DisplayName] = $cmd
+            [void]$clbUninstall.Items.Add($_.DisplayName)
+        }
+    }
+}
+$btnRefresh.Location = New-Object System.Drawing.Point(270, 25)
+$cardUninstall.Controls.Add($btnRefresh)
+
+$btnUninstall = New-StyledButton -Text "Remover Selecionados" -Width 150 -Height 35 -BgColor $ColorDanger -Action {
+    $selected = @($clbUninstall.CheckedItems)
+    if ($selected.Count -eq 0) { return }
+    foreach ($name in $selected) {
+        $cmd = $script:UninstallMap[$name]
+        Update-Status "Removendo $name..." 50
+        Safe-Log "Removendo $name..."
+        try {
+            if ($cmd -match '^(?:"(?<exe>[^"]+)"|(?<exe>\S+))\s*(?<args>.*)$') {
+                Start-Process -FilePath $Matches['exe'] -ArgumentList $Matches['args'] -Wait -NoNewWindow
+            }
+        } catch { Safe-Log "Erro ao remover ${name}: $($_.Exception.Message)" }
+    }
+    Update-Status "Concluído." 100
+}
+$btnUninstall.Location = New-Object System.Drawing.Point(270, 75)
+$cardUninstall.Controls.Add($btnUninstall)
 
 [void]$form.ShowDialog()
